@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 
+from . import mathnorm
 from .schema import Segment
 
 # Модель стабильно калечит одни и те же слова: имена, термины предмета.
@@ -87,6 +88,12 @@ def process(segment: Segment, prev_text: str = "") -> Segment:
     text = strip_fillers(text)
     text = join_boundary(prev_text, text)
     segment.text = text
+
+    # Формулы кладём в отдельное поле, а не портим основной текст:
+    # человеку в интерфейсе нужна речь, LLM — символьная запись.
+    math_text, is_math = mathnorm.annotate(text)
+    segment.has_math = is_math
+    segment.math_text = math_text if is_math else ""
     return segment
 
 

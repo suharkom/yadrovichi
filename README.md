@@ -45,6 +45,17 @@ python -c "import torch; print(torch.cuda.get_arch_list())"   # нужен sm_61
 python -m scripts.smoke
 ```
 
+## Сервер
+
+Тестовый сервер для замеров — доступ в `.env`, в репозиторий не коммитим.
+8 ядер CPU, отсюда `POST_WORKERS = 4`.
+
+```bash
+uvicorn app.main:app --workers 1   # строго один воркер: видеокарта одна
+python -m scripts.bench_rtf data/audio.mp3
+python -m scripts.check_transcript data/results/<job_id>.json
+```
+
 ## Структура
 
 ```

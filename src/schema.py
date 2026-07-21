@@ -40,6 +40,9 @@ class Segment:
     words: list[Word] = field(default_factory=list)
     role: int | None = None    # 0 — преподаватель, 1..N — ученики
     role_name: str = ""        # "Преподаватель", "Ученик 1", ...
+    lang: str = ""             # определённый язык сегмента, должен быть "ru"
+    has_math: bool = False     # в реплике есть формула — см. mathnorm
+    math_text: str = ""        # та же реплика в символьном виде, для LLM
 
     @property
     def duration(self) -> float:

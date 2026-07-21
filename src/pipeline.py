@@ -20,7 +20,8 @@ from typing import Iterator
 from . import audio, postprocess, stages
 from .schema import Segment
 
-POST_WORKERS = 3          # не больше половины ядер CPU — уточнить у куратора
+POST_WORKERS = 4          # 8 ядер на сервере, берём половину: остальное
+                          # нужно кластеризации pyannote и декодированию аудио
 CHECKPOINT = Path("data/checkpoint.jsonl")
 
 

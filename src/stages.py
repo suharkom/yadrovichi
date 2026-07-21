@@ -29,11 +29,22 @@ def diarize(audio_path: str, min_speakers: int = 2, max_speakers: int | None = N
 def transcribe(audio_path: str, segments: list[Segment]) -> list[Segment]:
     """faster-whisper turbo int8 по речевым участкам -> текст с таймкодами.
 
-    Заполняет segment.text и segment.words. Границы речи берутся из
-    диаризации, чтобы не гонять VAD дважды и не транскрибировать тишину.
+    Заполняет segment.text, segment.words и segment.lang. Границы речи
+    берутся из диаризации, чтобы не гонять VAD дважды и не транскрибировать
+    тишину.
+
+    Обязательные параметры:
+        compute_type="int8"              на Pascal float16 медленнее fp32
+        language="ru"                    ⚠️ жёстко, без автоопределения:
+                                         на тишине whisper переключает язык
+        condition_on_previous_text=False на часовых файлах иначе зацикливается
+        word_timestamps=True             нужны для привязки к спикерам
+        beam_size=5                      у turbo декодер 4 слоя, beam дёшев
+        initial_prompt=postprocess.initial_prompt()
     """
     for i, seg in enumerate(segments):
         seg.text = f"[заглушка транскрибации сегмента {i}]"
+        seg.lang = "ru"
         seg.words = [Word(seg.start, seg.end, seg.text)]
     return segments
 
