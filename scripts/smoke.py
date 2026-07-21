@@ -4,13 +4,21 @@
 Запуск: python -m scripts.smoke
 """
 
-from src import stages
+from src import chunking, stages
 from src.roles import neighbour_counts
 
 
 def main() -> None:
     segments = stages.diarize("fake.wav")
+
+    chunks = chunking.build(segments)
+    print(f"Нарезка: {chunking.stats(chunks)}")
+    for chunk in chunks[:4]:
+        print(f"  #{chunk.index} {chunk.start:7.2f}-{chunk.end:7.2f} "
+              f"({chunk.duration:5.1f}s) {chunk.speaker}")
+
     segments = stages.transcribe("fake.wav", segments)
+    print()
 
     print("Соседи по таймлайну:")
     for speaker, neighbours in sorted(neighbour_counts(segments).items()):

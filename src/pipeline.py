@@ -17,7 +17,7 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Iterator
 
-from . import audio, postprocess, stages
+from . import audio, chunking, postprocess, stages
 from .schema import Segment
 
 POST_WORKERS = 4          # 8 ядер на сервере, берём половину: остальное
@@ -35,7 +35,15 @@ def run(src: str | Path, checkpoint: bool = True) -> Iterator[Segment]:
     # Диаризация обязательно по всему файлу целиком, иначе спикеры
     # переименуются на середине записи.
     segments = stages.diarize(str(prepared))
-    segments = stages.transcribe(str(prepared), segments)
+
+    # Нарезка на чанки по границам пауз: каждый чанк — один спикер,
+    # поэтому привязка "кто сказал" получается по построению.
+    chunks = chunking.build(segments)
+
+    segments = []
+    for chunk in chunks:
+        segments.extend(stages.transcribe(str(prepared), chunk.segments))
+
     segments = stages.assign_roles(segments)
     segments.sort(key=lambda s: s.start)
 

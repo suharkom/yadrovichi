@@ -42,8 +42,8 @@ def transcribe(audio_path: str, segments: list[Segment]) -> list[Segment]:
         beam_size=5                      у turbo декодер 4 слоя, beam дёшев
         initial_prompt=postprocess.initial_prompt()
     """
-    for i, seg in enumerate(segments):
-        seg.text = f"[заглушка транскрибации сегмента {i}]"
+    for seg in segments:
+        seg.text = f"[заглушка транскрибации {seg.start:.1f}-{seg.end:.1f}]"
         seg.lang = "ru"
         seg.words = [Word(seg.start, seg.end, seg.text)]
     return segments

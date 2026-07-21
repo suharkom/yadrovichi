@@ -26,6 +26,8 @@
 
 ## Установка
 
+Нужен **ffmpeg** в PATH — им приводим аудио к 16 кГц моно.
+
 ```bash
 python -m venv .venv && .venv\Scripts\activate
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
@@ -39,10 +41,11 @@ cp .env.example .env   # вписать HF_TOKEN
 python -c "import torch; print(torch.cuda.get_arch_list())"   # нужен sm_61
 ```
 
-## Прогон на заглушках (GPU не нужен)
+## Прогон на заглушках (GPU, веса и ffmpeg не нужны)
 
 ```bash
-python -m scripts.smoke
+python -m scripts.smoke      # диаризация -> чанки -> роли
+python -m scripts.test_api   # приём файла, поток, лимит 200 МБ
 ```
 
 ## Сервер

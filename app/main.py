@@ -58,6 +58,7 @@ app = FastAPI(title="yadrovichi", lifespan=lifespan)
 
 async def save_upload(upload: UploadFile) -> Path:
     """Потоковая запись на диск с проверкой размера по ходу."""
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     suffix = Path(upload.filename or "audio").suffix or ".mp3"
     dst = UPLOAD_DIR / f"{uuid.uuid4().hex}{suffix}"
 
@@ -103,6 +104,7 @@ async def transcribe(file: UploadFile):
                 collected.append(segment.to_dict())
                 yield json.dumps(segment.to_dict(), ensure_ascii=False) + "\n"
 
+            RESULT_DIR.mkdir(parents=True, exist_ok=True)
             result_path = RESULT_DIR / f"{job_id}.json"
             result_path.write_text(
                 json.dumps(collected, ensure_ascii=False, indent=2), encoding="utf-8"
