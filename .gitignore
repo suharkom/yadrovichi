@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+.idea/
+.vscode/
+
+# Аудио в гит не коммитим никогда: файлы по 30-500 МБ,
+# репозиторий распухнет мгновенно и обратно уже не почистится.
+data/
+*.mp3
+*.mp4
+*.wav
+*.m4a
+
+result.json
+out.jsonl
+checkpoint.jsonl
