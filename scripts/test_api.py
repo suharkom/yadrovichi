@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
+
+os.environ["YADRO_FAKE"] = "1"  # стадии отдают фейковые данные, GPU не нужен
 
 import httpx
 

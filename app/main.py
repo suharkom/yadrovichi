@@ -9,8 +9,8 @@
    200 МБ в RAM на каждый запрос — это то, на чём падают при демо.
 
 2. Очередь на один воркер. Видеокарта одна, второй процесс просто не
-   влезет в 8 GB. Uvicorn запускать строго с --workers 1, параллелизм
-   делается очередью внутри приложения, а не размножением процессов.
+   влезет в 16 GB рядом с уже загруженными моделями. Uvicorn запускать
+   строго с --workers 1, параллелизм делается очередью внутри приложения.
 
 3. Результат отдаётся потоком NDJSON. На часовом файле обычный
    JSON-ответ не доживёт: обработка 15-25 минут, запрос оборвётся.
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -48,8 +49,14 @@ async def lifespan(app: FastAPI):
     """
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    # TODO(МЛщик): здесь прогрев — загрузить whisper и pyannote в память.
-    # Прогрев в RTF не считается, он отдельно.
+    # Прогрев: поднять whisper и pyannote в память один раз. На YADRO_FAKE=1
+    # и без GPU пропускаем, чтобы приложение запускалось для отладки API.
+    if os.environ.get("YADRO_FAKE") != "1":
+        try:
+            from src import models
+            models.warmup()
+        except Exception as exc:  # noqa: BLE001 — старт API не должен падать из-за GPU
+            print(f"[warmup] пропущен: {exc}")
     yield
 
 
@@ -135,3 +142,16 @@ async def result(job_id: str):
 @app.get("/health")
 async def health():
     return {"status": "ok", "queued": len(jobs)}
+
+
+# Gradio монтируется в это же приложение: /docs — API, /ui — интерфейс.
+# Один процесс и один порт, требование про локальный бэкенд на FastAPI
+# закрыто буквально. Импорт внизу и мягкий: без gradio API всё равно живой.
+try:
+    import gradio as gr
+
+    from app.ui import demo
+
+    app = gr.mount_gradio_app(app, demo, path="/ui")
+except ImportError:  # gradio не установлен — работаем только как API
+    pass

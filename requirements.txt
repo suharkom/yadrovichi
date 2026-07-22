@@ -1,11 +1,13 @@
-# ⚠️ torch ставится ОТДЕЛЬНО и строго под cu121:
-#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
-# Причина: GTX 1080 — это Pascal, объявлен устаревшим в CUDA 12.8 и убран в 13.
-# Сразу после установки проверить:
-#   python -c "import torch; print(torch.cuda.get_arch_list())"  -> нужен sm_61
+# ⚠️ torch ставится ОТДЕЛЬНО под cu128:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+# Целевое железо — RTX A4000 (Ampere, sm_86, драйвер 595, CUDA 13.2).
+# Проверка после установки:
+#   python -c "import torch; print(torch.cuda.get_device_capability(0))"  -> (8, 6)
 
 faster-whisper>=1.1.0
 pyannote.audio>=4.0.0
+soundfile>=0.12.1
+numpy>=1.26
 ffmpeg-python>=0.2.0
 fastapi>=0.115.0
 uvicorn>=0.32.0

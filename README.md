@@ -21,24 +21,29 @@
 | Диаризация | ≤ 0.2 |
 | Пайплайн | ≤ 0.4 |
 
-⚠️ 1080 — это Pascal. **fp16 там в 64 раза медленнее fp32**, тензорных ядер нет.
-`compute_type="float16"` даст замедление, а не ускорение. Только `int8`.
+Бюджет задавался под GTX 1080; сервер оказался мощнее (A4000), запас по RTF шире.
+
+Целевое железо — **RTX A4000** (Ampere, sm_86, 16 ГБ, драйвер 595, CUDA 13.2).
+Ampere имеет тензорные ядра, поэтому `compute_type="float16"` — правильный
+выбор. `int8` был бы нужен только на Pascal (GTX 1080), которого в сервере
+не оказалось. В 16 ГБ whisper и pyannote помещаются одновременно, поэтому
+стадии не выгружаются между собой.
 
 ## Установка
 
 Нужен **ffmpeg** в PATH — им приводим аудио к 16 кГц моно.
 
 ```bash
-python -m venv .venv && .venv\Scripts\activate
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+python -m venv .venv && source .venv/bin/activate
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
-cp .env.example .env   # вписать HF_TOKEN
+hf auth login   # токен Read + принять условия на моделях pyannote
 ```
 
 Проверка железа перед всем остальным:
 
 ```bash
-python -c "import torch; print(torch.cuda.get_arch_list())"   # нужен sm_61
+python -c "import torch; print(torch.cuda.get_device_capability(0))"   # (8, 6)
 ```
 
 ## Прогон на заглушках (GPU, веса и ffmpeg не нужны)
@@ -63,12 +68,15 @@ python -m scripts.check_transcript data/results/<job_id>.json
 
 ```
 src/schema.py       контракт данных — Segment, менять только всей командой
-src/stages.py       сигнатуры стадий, реализует МЛщик
+src/models.py       ленивая загрузка whisper + pyannote (float16, CUDA)
+src/stages.py       diarize/transcribe/assign_roles; заглушки за YADRO_FAKE=1
 src/roles.py        граф переходов + маркеры, GPU не нужен
+src/chunking.py     нарезка по паузам, один спикер на чанк
 src/audio.py        приведение к 16 кГц моно, один раз на входе
 src/postprocess.py  правила на CPU + normalize_for_wer
 src/pipeline.py     конвейер-генератор, чекпоинты, замер RTF
-scripts/smoke.py    прогон на фейковых данных
+scripts/smoke.py    прогон на фейковых данных (YADRO_FAKE=1)
+scripts/bench_rtf.py замер RTF по стадиям на реальном файле
 ```
 
 ## Договорённости
@@ -79,7 +87,7 @@ scripts/smoke.py    прогон на фейковых данных
 - Аудио в гит не коммитить
 - Перед WER прогонять **оба** текста через `postprocess.normalize_for_wer`
 - DER не заявляем как измеренную метрику: эталона с таймкодами нет
-- Колаб только для отладки — там T4, цифры RTF оттуда невалидны
+- Колаб только для отладки — там T4, цифры RTF берём только с сервера (A4000)
 - Застрял на 45 минут — пишешь в чат, не героизируешь
 
 ## Порядок работ

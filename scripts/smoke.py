@@ -4,6 +4,10 @@
 Запуск: python -m scripts.smoke
 """
 
+import os
+
+os.environ["YADRO_FAKE"] = "1"  # стадии отдают фейковые данные, GPU не нужен
+
 from src import chunking, stages
 from src.roles import neighbour_counts
 
