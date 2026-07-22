@@ -117,7 +117,10 @@ def transcribe(audio_path: str, segments: list[Segment]) -> list[Segment]:
     _attach_words(segments, words)
     for seg in segments:
         seg.lang = info.language
-    return segments
+
+    # Сегменты, которым не досталось ни слова (слова ушли в соседний по
+    # перекрытию), — это пустые реплики в таймлайне. Убираем.
+    return [seg for seg in segments if seg.text]
 
 
 def assign_roles(segments: list[Segment]) -> list[Segment]:
