@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -49,14 +48,9 @@ async def lifespan(app: FastAPI):
     """
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    # Прогрев: поднять whisper и pyannote в память один раз. На YADRO_FAKE=1
-    # и без GPU пропускаем, чтобы приложение запускалось для отладки API.
-    if os.environ.get("YADRO_FAKE") != "1":
-        try:
-            from src import models
-            models.warmup()
-        except Exception as exc:  # noqa: BLE001 — старт API не должен падать из-за GPU
-            print(f"[warmup] пропущен: {exc}")
+    # Здесь МЛщик добавит прогрев моделей: поднять whisper и pyannote в память
+    # один раз при старте, а не в обработчике запроса (иначе каждый запрос
+    # заново грузит веса на GPU — минуты на пустом месте).
     yield
 
 
