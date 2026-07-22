@@ -34,6 +34,16 @@ class AudioProcessingPipeline:
         settings: Settings,
     ) -> None:
         self.settings = settings
+
+        # Инициализируем CUDA-контекст torch ДО загрузки faster-whisper
+        # (он на CTranslate2). Иначе на этом сервере NVML внутри аллокатора
+        # torch падает ассертом при первом forward pyannote — если CTranslate2
+        # тронул CUDA раньше. Разовый прогрев torch первым снимает конфликт.
+        import torch
+
+        if torch.cuda.is_available():
+            torch.zeros(1, device="cuda")
+
         self.asr_service = ASRService(settings)
         self.diarization_service = DiarizationService(settings)
 
