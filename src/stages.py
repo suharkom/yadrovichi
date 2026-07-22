@@ -31,14 +31,21 @@ def diarize(audio_path: str, min_speakers: int = 2, max_speakers: int | None = N
     if _fake():
         return _fake_segments()
 
-    from .models import get_diarizer
+    import torch
+
+    from .models import get_diarizer, load_audio
 
     pipe = get_diarizer()
     kwargs: dict[str, int] = {"min_speakers": min_speakers}
     if max_speakers is not None:
         kwargs["max_speakers"] = max_speakers
 
-    output = pipe(audio_path, **kwargs)
+    # Кормим готовый waveform, а не путь к файлу: pyannote 4 иначе читает
+    # аудио через torchcodec, которому на этой машине не хватает libnvrtc.
+    # soundfile уже загрузил тот же 16 кГц моно, лишнего чтения нет.
+    data, sample_rate = load_audio(audio_path)
+    waveform = torch.from_numpy(data).unsqueeze(0)  # (channel=1, time)
+    output = pipe({"waveform": waveform, "sample_rate": sample_rate}, **kwargs)
     # В pyannote 4 exclusive-режим оставляет одного спикера в каждый момент —
     # это убирает конфликты на наложениях при привязке к словам.
     annotation = getattr(output, "exclusive_speaker_diarization",
