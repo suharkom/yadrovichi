@@ -35,17 +35,13 @@ class AudioProcessingPipeline:
     ) -> None:
         self.settings = settings
 
-        # Инициализируем CUDA-контекст torch ДО загрузки faster-whisper
-        # (он на CTranslate2). Иначе на этом сервере NVML внутри аллокатора
-        # torch падает ассертом при первом forward pyannote — если CTranslate2
-        # тронул CUDA раньше. Разовый прогрев torch первым снимает конфликт.
-        import torch
-
-        if torch.cuda.is_available():
-            torch.zeros(1, device="cuda")
-
-        self.asr_service = ASRService(settings)
+        # Порядок важен: pyannote (torch) грузится ПЕРВЫМ и инициализирует
+        # CUDA/NVML корректно. faster-whisper (CTranslate2) — ленивый, трогает
+        # CUDA только при первой транскрибации, уже после диаризации. Если
+        # CTranslate2 инициализирует CUDA раньше pyannote, NVML внутри torch
+        # падает ассертом на forward pyannote.
         self.diarization_service = DiarizationService(settings)
+        self.asr_service = ASRService(settings)
 
     def process(
         self,
@@ -114,20 +110,23 @@ class AudioProcessingPipeline:
                 time.perf_counter() - stages_started_at
             )
         else:
-            print("Запускаю транскрибацию...")
+            # Диаризация ПЕРВОЙ: pyannote (torch) инициализирует CUDA до
+            # того, как faster-whisper (CTranslate2) её тронет, иначе NVML
+            # внутри torch падает ассертом.
+            print("Запускаю диаризацию...")
             stages_started_at = time.perf_counter()
 
-            asr_result = self.asr_service.transcribe(
-                audio_path=normalized_path,
-                audio_duration=audio_duration,
-            )
-
-            print("Запускаю диаризацию...")
             diarization_result = (
                 self.diarization_service.diarize(
                     audio_path=normalized_path,
                     audio_duration=audio_duration,
                 )
+            )
+
+            print("Запускаю транскрибацию...")
+            asr_result = self.asr_service.transcribe(
+                audio_path=normalized_path,
+                audio_duration=audio_duration,
             )
             stages_elapsed_seconds = (
                 time.perf_counter() - stages_started_at

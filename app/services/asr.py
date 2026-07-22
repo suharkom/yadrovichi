@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from faster_whisper import WhisperModel
 
 from app.core.config import Settings
 
@@ -13,19 +12,28 @@ from app.core.config import Settings
 class ASRService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self._model = None
 
-        print(
-            f"Загрузка ASR-модели {settings.asr_model_name} "
-            f"на {settings.asr_device}..."
-        )
+    @property
+    def model(self):
+        """Ленивая загрузка: CTranslate2 трогает CUDA только при первой
+        транскрибации. Это важно на сервере — если faster-whisper
+        инициализирует CUDA раньше pyannote, NVML внутри torch падает
+        ассертом. Поэтому диаризация должна отработать первой."""
+        if self._model is None:
+            from faster_whisper import WhisperModel
 
-        self.model = WhisperModel(
-            settings.asr_model_name,
-            device=settings.asr_device,
-            compute_type=settings.asr_compute_type,
-        )
-
-        print("ASR-модель загружена.")
+            print(
+                f"Загрузка ASR-модели {self.settings.asr_model_name} "
+                f"на {self.settings.asr_device}..."
+            )
+            self._model = WhisperModel(
+                self.settings.asr_model_name,
+                device=self.settings.asr_device,
+                compute_type=self.settings.asr_compute_type,
+            )
+            print("ASR-модель загружена.")
+        return self._model
 
     def transcribe(
         self,
