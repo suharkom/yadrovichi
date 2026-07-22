@@ -64,22 +64,22 @@ python -m pytest tests/ -q
 
 ## Структура
 
-```
-app/core/config.py           настройки из .env (модели, устройство, лимит файла)
-app/services/asr.py          faster-whisper, ленивая загрузка, RTF по стадии
-app/services/diarization.py  pyannote (аудио через soundfile, в обход torchcodec)
-app/services/alignment.py    привязка слов, реплики, сглаживание переключений
-app/services/role_detection.py  преподаватель по графу + маркерам (батч-путь)
-app/services/text_postprocessing.py  словарь замен ошибок ASR
-app/services/mathnorm.py     формулы речью → символьный вид для LLM (не подключён)
-app/services/pipeline.py     батч-оркестратор: диаризация → ASR → склейка → роли
-app/services/streaming.py    потоковый пайплайн: граф-роли → потоковый ASR
-app/main.py                  FastAPI: /stream, /transcribe, приём файла до лимита
-app/ui.py                    Gradio на /ui: живой таймлайн, цвет по роли, JSON
-configs/                     словари маркеров преподавателя и замен ошибок ASR
-scripts/smoke.py             прогон пайплайна на файле
-tests/                       юнит-тесты alignment и role_detection
-```
+| Файл | Что делает |
+|---|---|
+| `app/core/config.py` | настройки из `.env` (модели, устройство, лимит файла) |
+| `app/services/asr.py` | faster-whisper, ленивая загрузка, RTF по стадии |
+| `app/services/diarization.py` | pyannote (аудио через soundfile, в обход torchcodec) |
+| `app/services/alignment.py` | привязка слов, реплики, сглаживание переключений |
+| `app/services/role_detection.py` | преподаватель по графу + маркерам (батч-путь) |
+| `app/services/text_postprocessing.py` | словарь замен ошибок ASR |
+| `app/services/mathnorm.py` | формулы речью → символьный вид для LLM (не подключён) |
+| `app/services/pipeline.py` | батч-оркестратор: диаризация → ASR → склейка → роли |
+| `app/services/streaming.py` | потоковый пайплайн: граф-роли → потоковый ASR |
+| `app/main.py` | FastAPI: `/stream`, `/transcribe`, приём файла до лимита |
+| `app/ui.py` | Gradio на `/ui`: живой таймлайн, цвет по роли, JSON |
+| `configs/` | словари маркеров преподавателя и замен ошибок ASR |
+| `scripts/smoke.py` | прогон пайплайна на файле |
+| `tests/` | юнит-тесты alignment и role_detection |
 
 ## Договорённости
 
