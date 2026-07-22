@@ -63,13 +63,23 @@ class DiarizationService:
                 self.settings.max_speakers
             )
 
+        # Кормим pyannote готовый waveform, а не путь к файлу: на сервере
+        # pyannote 4 иначе читает аудио через torchcodec, которому не хватает
+        # libnvrtc. soundfile читает тот же 16 кГц моно без этой зависимости.
+        import soundfile as sf
+
+        samples, sample_rate = sf.read(str(audio_path), dtype="float32")
+        if samples.ndim > 1:
+            samples = samples.mean(axis=1)
+        waveform = torch.from_numpy(samples).unsqueeze(0)  # (channel=1, time)
+
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
         started_at = time.perf_counter()
 
         output = self.pipeline(
-            str(audio_path),
+            {"waveform": waveform, "sample_rate": sample_rate},
             **parameters,
         )
 
