@@ -1,20 +1,19 @@
-"""Локальный бэкенд.
+"""Локальный бэкенд поверх ML-пайплайна из app/services.
 
-Архитектура, которую просил куратор:
-    приём файла (до 200 МБ) -> нарезка на чанки -> очередь обработки
+Требование куратора: локальный сервис на FastAPI, приём файла до 200 МБ.
 
-Три решения, которые здесь зафиксированы:
+Решения, зафиксированные здесь:
 
-1. Файл пишется на диск потоком по 1 МБ, а не читается в память целиком.
-   200 МБ в RAM на каждый запрос — это то, на чём падают при демо.
+1. Файл пишется на диск потоком по 1 МБ, а не читается в память целиком —
+   200 МБ в RAM на каждый запрос кладут сервис при демо.
+2. Одна задача на GPU за раз (Semaphore). Видеокарта одна, второй прогон
+   не влезет рядом с загруженными моделями. Uvicorn — строго --workers 1.
+3. Модели грузятся один раз (ленивая инициализация пайплайна), а не в
+   каждом запросе, иначе каждый запрос заново поднимает веса на GPU.
 
-2. Очередь на один воркер. Видеокарта одна, второй процесс просто не
-   влезет в 16 GB рядом с уже загруженными моделями. Uvicorn запускать
-   строго с --workers 1, параллелизм делается очередью внутри приложения.
-
-3. Результат отдаётся потоком NDJSON. На часовом файле обычный
-   JSON-ответ не доживёт: обработка 15-25 минут, запрос оборвётся.
-   Финальный цельный JSON остаётся отдельной ручкой для скачивания.
+Пайплайн (AudioProcessingPipeline) синхронный и батчевый: обрабатывает
+файл целиком и возвращает JSON. Потоковая выдача по мере готовности —
+следующий шаг (пайплайн надо превратить в генератор), пока не сделана.
 """
 
 from __future__ import annotations
@@ -22,39 +21,37 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
-
-from src import pipeline
+from fastapi.responses import JSONResponse
 
 MAX_BYTES = 200 * 1024 * 1024
 CHUNK_BYTES = 1024 * 1024
 UPLOAD_DIR = Path("data/uploads")
 RESULT_DIR = Path("data/results")
+WORK_DIR = Path("data/work")
 
-# Одна задача на GPU за раз. Остальные ждут в очереди.
 gpu_lock = asyncio.Semaphore(1)
 jobs: dict[str, dict] = {}
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Модели грузятся один раз при старте, а не в обработчике запроса.
-
-    Иначе каждый запрос заново поднимает веса на GPU — минуты на пустом месте.
-    """
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    # Здесь МЛщик добавит прогрев моделей: поднять whisper и pyannote в память
-    # один раз при старте, а не в обработчике запроса (иначе каждый запрос
-    # заново грузит веса на GPU — минуты на пустом месте).
-    yield
+_pipeline = None
 
 
-app = FastAPI(title="yadrovichi", lifespan=lifespan)
+def get_pipeline():
+    """Ленивая инициализация: torch/pyannote/whisper поднимаются один раз
+    при первом запросе. Импорт внутри функции, чтобы `import app.main`
+    работал на машине без GPU (для тестов и монтирования Gradio)."""
+    global _pipeline
+    if _pipeline is None:
+        from app.core.config import load_settings
+        from app.services.pipeline import AudioProcessingPipeline
+
+        _pipeline = AudioProcessingPipeline(load_settings())
+    return _pipeline
+
+
+app = FastAPI(title="yadrovichi")
 
 
 async def save_upload(upload: UploadFile) -> Path:
@@ -77,44 +74,29 @@ async def save_upload(upload: UploadFile) -> Path:
 
 @app.post("/transcribe")
 async def transcribe(file: UploadFile):
-    """Основная ручка: файл на вход, поток реплик на выход.
-
-    Каждая строка ответа — отдельный JSON-объект (NDJSON). Клиент может
-    рисовать их по мере поступления, не дожидаясь конца обработки.
-    """
+    """Приём файла -> обработка -> итоговый JSON с таймлайном и ролями."""
     src = await save_upload(file)
     job_id = uuid.uuid4().hex
     jobs[job_id] = {"status": "queued", "source": str(src)}
 
-    async def stream():
-        yield json.dumps({"job_id": job_id, "status": "queued"},
-                         ensure_ascii=False) + "\n"
+    async with gpu_lock:
+        jobs[job_id]["status"] = "running"
+        loop = asyncio.get_running_loop()
 
-        async with gpu_lock:
-            jobs[job_id]["status"] = "running"
-            collected = []
-            loop = asyncio.get_running_loop()
+        # Пайплайн синхронный и грузит GPU — уводим в пул потоков, чтобы не
+        # блокировать event loop и остальные запросы, пока идёт обработка.
+        result = await loop.run_in_executor(
+            None, lambda: get_pipeline().process(src, work_dir=WORK_DIR)
+        )
 
-            # Пайплайн синхронный и грузит CPU/GPU — уводим в пул потоков,
-            # чтобы не блокировать event loop и остальные запросы.
-            gen = pipeline.run(src)
-            while True:
-                segment = await loop.run_in_executor(None, lambda: next(gen, None))
-                if segment is None:
-                    break
-                collected.append(segment.to_dict())
-                yield json.dumps(segment.to_dict(), ensure_ascii=False) + "\n"
+        RESULT_DIR.mkdir(parents=True, exist_ok=True)
+        result_path = RESULT_DIR / f"{job_id}.json"
+        result_path.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        jobs[job_id] = {"status": "done", "result": str(result_path)}
 
-            RESULT_DIR.mkdir(parents=True, exist_ok=True)
-            result_path = RESULT_DIR / f"{job_id}.json"
-            result_path.write_text(
-                json.dumps(collected, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-            jobs[job_id] = {"status": "done", "result": str(result_path)}
-            yield json.dumps({"job_id": job_id, "status": "done"},
-                             ensure_ascii=False) + "\n"
-
-    return StreamingResponse(stream(), media_type="application/x-ndjson")
+    return JSONResponse(result)
 
 
 @app.get("/jobs/{job_id}")
@@ -126,10 +108,10 @@ async def job_status(job_id: str):
 
 @app.get("/result/{job_id}")
 async def result(job_id: str):
-    """Финальный цельный JSON — для скачивания и для метрик."""
+    """Сохранённый JSON — для скачивания и для метрик."""
     path = RESULT_DIR / f"{job_id}.json"
     if not path.exists():
-        raise HTTPException(404, "Результат ещё не готов")
+        raise HTTPException(404, "Результат не найден")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -139,13 +121,12 @@ async def health():
 
 
 # Gradio монтируется в это же приложение: /docs — API, /ui — интерфейс.
-# Один процесс и один порт, требование про локальный бэкенд на FastAPI
-# закрыто буквально. Импорт внизу и мягкий: без gradio API всё равно живой.
+# Импорт мягкий: без gradio API всё равно поднимается.
 try:
     import gradio as gr
 
     from app.ui import demo
 
     app = gr.mount_gradio_app(app, demo, path="/ui")
-except ImportError:  # gradio не установлен — работаем только как API
+except ImportError:
     pass

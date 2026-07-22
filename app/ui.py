@@ -1,96 +1,76 @@
-"""Веб-интерфейс.
+"""Веб-интерфейс поверх того же приложения: /docs — API, /ui — интерфейс.
 
-Монтируется внутрь того же FastAPI-приложения: /docs — API, /ui — интерфейс.
-Один процесс, один порт, ничего не дублируется.
+Рендерит результат AudioProcessingPipeline: таймлайн реплик с ролью,
+цветом по спикеру, счётчиком RTF и кнопкой скачать JSON.
 
-Потоковая выдача здесь бесплатна: pipeline.run — генератор, а Gradio умеет
-принимать функцию-генератор и дорисовывать результат на каждый yield.
-Никакого SSE руками писать не нужно.
+Пайплайн батчевый, поэтому результат показывается после обработки целиком.
 """
 
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
-from typing import Iterator
 
 import gradio as gr
-
-from src import audio, pipeline
-from src.schema import Segment
 
 # Цвет по роли: преподаватель отдельно, ученики оттенками.
 COLORS = ["#c2410c", "#1d4ed8", "#15803d", "#7e22ce", "#b91c1c", "#0e7490"]
 
 
-def _color(role: int | None) -> str:
-    if role is None:
+def _color(speaker_id) -> str:
+    if speaker_id is None:
         return "#6b7280"
-    return COLORS[role % len(COLORS)]
+    return COLORS[int(speaker_id) % len(COLORS)]
 
 
-def _render(segments: list[Segment]) -> str:
-    """Таймлайн репликами. Формулы показываем отдельной строкой:
-    человеку нужна речь, символьная запись — справочно."""
+def _render(timeline: list[dict]) -> str:
     rows = []
-    for seg in segments:
-        stamp = f"{int(seg.start) // 60:02d}:{int(seg.start) % 60:02d}"
-        math = ""
-        if seg.has_math and seg.math_text:
-            math = (f"<div style='font-family:monospace;font-size:.85em;"
-                    f"opacity:.75;margin-top:.25em'>{seg.math_text}</div>")
+    for item in timeline:
+        start = float(item.get("start", 0.0))
+        stamp = f"{int(start) // 60:02d}:{int(start) % 60:02d}"
+        name = item.get("display_name", item.get("source_speaker", "?"))
+        color = _color(item.get("speaker_id"))
+        text = item.get("text", "")
         rows.append(
             f"<div style='margin:.6em 0;padding-left:.8em;"
-            f"border-left:3px solid {_color(seg.role)}'>"
+            f"border-left:3px solid {color}'>"
             f"<span style='opacity:.6;font-family:monospace'>{stamp}</span> "
-            f"<b style='color:{_color(seg.role)}'>{seg.role_name or seg.speaker}</b>"
-            f"<div>{seg.text}</div>{math}</div>"
+            f"<b style='color:{color}'>{name}</b>"
+            f"<div>{text}</div></div>"
         )
     return "".join(rows) or "<i>пусто</i>"
 
 
-def process(file) -> Iterator[tuple[str, str, str]]:
-    """Генератор: отдаёт (таймлайн, статус, json) на каждой готовой реплике."""
+def process(file):
+    """Прогон файла через пайплайн. Возвращает (таймлайн, статус, путь к JSON)."""
     if file is None:
-        yield "<i>Загрузите файл</i>", "", ""
-        return
+        return "<i>Загрузите файл</i>", "", None
+
+    from app.main import WORK_DIR, get_pipeline
 
     src = Path(file.name if hasattr(file, "name") else file)
-    started = time.perf_counter()
+    result = get_pipeline().process(src, work_dir=WORK_DIR)
 
-    try:
-        total = audio.duration(audio.prepare(src))
-    except Exception:
-        total = 0.0
-
-    collected: list[Segment] = []
-    for segment in pipeline.run(src):
-        collected.append(segment)
-        elapsed = time.perf_counter() - started
-        done = segment.end
-
-        # Счётчик RTF считается на лету. На защите это работает лучше
-        # любого слайда: куратор видит, что укладываемся, прямо в демо.
-        rtf = elapsed / done if done else 0.0
-        progress = f"{done / total:.0%}" if total else "—"
-        status = (f"Обработано {progress} · реплик {len(collected)} · "
-                  f"прошло {elapsed:.0f}с · **RTF {rtf:.3f}**")
-
-        yield _render(collected), status, ""
-
-    elapsed = time.perf_counter() - started
-    rtf = elapsed / total if total else 0.0
+    metrics = result.get("metrics", {})
+    role = result.get("role_detection", {})
+    rtf = metrics.get("pipeline_rtf", 0.0)
     verdict = "укладываемся" if rtf <= 0.4 else "ПРЕВЫШЕН бюджет 0.4"
-    summary = (f"Готово · {len(collected)} реплик · {elapsed:.0f}с "
-               f"на {total / 60:.1f} мин аудио · **RTF {rtf:.3f}** — {verdict}")
+    status = (
+        f"Готово · спикеров {result.get('speaker_count', '?')} · "
+        f"реплик {metrics.get('final_utterance_count', '?')} · "
+        f"**RTF {rtf:.3f}** — {verdict}\n\n"
+        f"ASR RTF {metrics.get('asr_rtf', 0):.3f} · "
+        f"диаризация RTF {metrics.get('diarization_rtf', 0):.3f} · "
+        f"преподаватель {role.get('teacher_speaker', '?')} "
+        f"(уверенность {role.get('heuristic_confidence', 0):.2f}"
+        f"{', низкая' if role.get('low_confidence') else ''})"
+    )
 
-    payload = json.dumps([s.to_dict() for s in collected], ensure_ascii=False, indent=2)
     out = Path("data/results/last.json")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(payload, encoding="utf-8")
+    out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    yield _render(collected), summary, str(out)
+    return _render(result.get("timeline", [])), status, str(out)
 
 
 def build() -> gr.Blocks:

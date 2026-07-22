@@ -1,31 +1,141 @@
-"""Прогон пайплайна на заглушках — без GPU, без весов, без ffmpeg.
+from __future__ import annotations
 
-Проверяет, что контракт данных сходится и стадии стыкуются:
-диаризация -> нарезка на чанки -> транскрибация -> роли.
-Запуск: python -m scripts.smoke
-"""
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
 
-from src import chunking, stages
+from app.core.config import load_settings
+from app.services.pipeline import AudioProcessingPipeline
+
+
+def save_json(
+    result: dict[str, Any],
+    output_path: Path,
+) -> None:
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with output_path.open(
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(
+            result,
+            file,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Запуск ASR, диаризации "
+            "и определения ролей."
+        )
+    )
+
+    parser.add_argument(
+        "audio_path",
+        type=Path,
+        help="Путь к аудиофайлу.",
+    )
+
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("artifacts/result.json"),
+        help="Путь для сохранения итогового JSON.",
+    )
+
+    return parser.parse_args()
 
 
 def main() -> None:
-    segments = stages.diarize("fake.wav")
+    args = parse_arguments()
 
-    chunks = chunking.build(segments)
-    print(f"Нарезка: {chunking.stats(chunks)}")
-    for chunk in chunks[:4]:
-        print(f"  #{chunk.index} {chunk.start:7.2f}-{chunk.end:7.2f} "
-              f"({chunk.duration:5.1f}s) {chunk.speaker}")
+    try:
+        settings = load_settings()
 
-    segments = stages.transcribe("fake.wav", segments)
-    segments = stages.assign_roles(segments)
+        print("Конфигурация:")
+        print(f"  device: {settings.asr_device}")
+        print(f"  ASR model: {settings.asr_model_name}")
+        print(
+            f"  compute type: "
+            f"{settings.asr_compute_type}"
+        )
+        print(
+            f"  beam size: {settings.asr_beam_size}"
+        )
+        print(f"  language: {settings.asr_language or 'auto'}")
+        print(
+            "  parallel GPU stages: "
+            f"{settings.parallel_gpu_stages}"
+        )
+        print(
+            f"  diarization model: "
+            f"{settings.diarization_model_name}"
+        )
+        print()
 
-    print("\nРезультат:")
-    for seg in segments:
-        print(f"  [{seg.start:7.2f} - {seg.end:7.2f}] {seg.role_name:>12} | {seg.text}")
+        pipeline = AudioProcessingPipeline(settings)
+        result = pipeline.process(args.audio_path)
 
-    assert all(s.text for s in segments), "не у всех сегментов есть текст"
-    print(f"\nOK: сегментов {len(segments)}, стадии стыкуются")
+        save_json(result, args.output)
+
+        role_detection = result["role_detection"]
+        metrics = result["metrics"]
+
+        print()
+        print("Готово:")
+        print(
+            f"  преподаватель: "
+            f"{role_detection['teacher_speaker']}"
+        )
+        print(
+            f"  эвристическая уверенность: "
+            f"{role_detection['heuristic_confidence']:.3f}"
+        )
+        print(
+            f"  низкая уверенность: "
+            f"{role_detection['low_confidence']}"
+        )
+        print(
+            f"  спикеров: "
+            f"{result['speaker_count']}"
+        )
+        print(
+            f"  итоговых реплик: "
+            f"{metrics['final_utterance_count']}"
+        )
+        print(
+            f"  ASR RTF: "
+            f"{metrics['asr_rtf']:.3f}"
+        )
+        print(
+            f"  diarization RTF: "
+            f"{metrics['diarization_rtf']:.3f}"
+        )
+        print(
+            f"  pipeline RTF: "
+            f"{metrics['pipeline_rtf']:.3f}"
+        )
+        print(
+            f"  слов UNKNOWN: "
+            f"{metrics['unknown_word_count']}"
+        )
+        print(f"  результат: {args.output}")
+
+    except Exception as exc:
+        print(
+            f"\nОшибка: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        raise
 
 
 if __name__ == "__main__":

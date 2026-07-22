@@ -4,14 +4,19 @@
 # Проверка после установки:
 #   python -c "import torch; print(torch.cuda.get_device_capability(0))"  -> (8, 6)
 
+# ML-ядро
 faster-whisper>=1.1.0
 pyannote.audio>=4.0.0
 soundfile>=0.12.1
 numpy>=1.26
-ffmpeg-python>=0.2.0
+python-dotenv>=1.0.0
+
+# Веб-слой
 fastapi>=0.115.0
 uvicorn>=0.32.0
 python-multipart>=0.0.9
 gradio>=5.0.0
-python-dotenv>=1.0.0
+
+# Метрики и тесты
 jiwer>=3.0.0
+pytest>=8.0
