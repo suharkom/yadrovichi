@@ -42,35 +42,51 @@ def _render(timeline: list[dict]) -> str:
 
 
 def process(file):
-    """Прогон файла через пайплайн. Возвращает (таймлайн, статус, путь к JSON)."""
+    """Потоковый прогон: таймлайн заполняется по мере готовности реплик.
+
+    Генератор — Gradio дорисовывает вывод на каждый yield.
+    """
     if file is None:
-        return "<i>Загрузите файл</i>", "", None
+        yield "<i>Загрузите файл</i>", "", None
+        return
 
     from app.main import WORK_DIR, get_pipeline
+    from app.services.streaming import stream_pipeline
 
     src = Path(file.name if hasattr(file, "name") else file)
-    result = get_pipeline().process(src, work_dir=WORK_DIR)
+    collected: list[dict] = []
+    meta: dict = {}
 
-    metrics = result.get("metrics", {})
-    role = result.get("role_detection", {})
-    rtf = metrics.get("pipeline_rtf", 0.0)
-    verdict = "укладываемся" if rtf <= 0.4 else "ПРЕВЫШЕН бюджет 0.4"
-    status = (
-        f"Готово · спикеров {result.get('speaker_count', '?')} · "
-        f"реплик {metrics.get('final_utterance_count', '?')} · "
-        f"**RTF {rtf:.3f}** — {verdict}\n\n"
-        f"ASR RTF {metrics.get('asr_rtf', 0):.3f} · "
-        f"диаризация RTF {metrics.get('diarization_rtf', 0):.3f} · "
-        f"преподаватель {role.get('teacher_speaker', '?')} "
-        f"(уверенность {role.get('heuristic_confidence', 0):.2f}"
-        f"{', низкая' if role.get('low_confidence') else ''})"
-    )
+    yield "<i>Диаризация…</i>", "Загружаю и размечаю по голосам", None
 
-    out = Path("data/results/last.json")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    return _render(result.get("timeline", [])), status, str(out)
+    for item in stream_pipeline(get_pipeline(), src, WORK_DIR):
+        if item["type"] == "meta":
+            meta = item
+            yield (
+                "<i>Распознаю речь…</i>",
+                f"Спикеров {item['speaker_count']} · "
+                f"преподаватель {item.get('teacher', '?')} · "
+                f"диаризация RTF {item['diarization_rtf']:.3f}",
+                None,
+            )
+        elif item["type"] == "utterance":
+            collected.append(item)
+            yield _render(collected), f"Реплик получено: {len(collected)}…", None
+        elif item["type"] == "done":
+            rtf = item["pipeline_rtf"]
+            verdict = "укладываемся" if rtf <= 0.4 else "ПРЕВЫШЕН бюджет 0.4"
+            out = Path("data/results/last.json")
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(
+                json.dumps({"meta": meta, "timeline": collected},
+                           ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            status = (
+                f"Готово · спикеров {meta.get('speaker_count', '?')} · "
+                f"реплик {item['utterance_count']} · **RTF {rtf:.3f}** — {verdict}"
+            )
+            yield _render(collected), status, str(out)
 
 
 def build() -> gr.Blocks:

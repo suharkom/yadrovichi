@@ -24,7 +24,9 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+
+from app.services.streaming import stream_pipeline
 
 MAX_BYTES = 200 * 1024 * 1024
 CHUNK_BYTES = 1024 * 1024
@@ -97,6 +99,30 @@ async def transcribe(file: UploadFile):
         jobs[job_id] = {"status": "done", "result": str(result_path)}
 
     return JSONResponse(result)
+
+
+@app.post("/stream")
+async def stream(file: UploadFile):
+    """Потоковая выдача: реплики с ролями отдаются по мере готовности (NDJSON).
+
+    Каждая строка ответа — отдельный JSON: meta, потом utterance по одной,
+    потом done. Клиент рисует их вживую, не дожидаясь конца обработки.
+    """
+    src = await save_upload(file)
+
+    async def gen():
+        loop = asyncio.get_running_loop()
+        async with gpu_lock:
+            iterator = await loop.run_in_executor(
+                None, lambda: iter(stream_pipeline(get_pipeline(), src, WORK_DIR))
+            )
+            while True:
+                item = await loop.run_in_executor(None, lambda: next(iterator, None))
+                if item is None:
+                    break
+                yield json.dumps(item, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 
 @app.get("/jobs/{job_id}")
