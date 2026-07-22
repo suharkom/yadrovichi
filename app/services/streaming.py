@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import time
-from collections import deque
+from collections import defaultdict, deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Iterator
@@ -29,8 +29,11 @@ from app.services.audio import (
     normalize_audio,
     validate_audio_file,
 )
-from app.services.role_detection import calculate_neighbors, create_speaker_mapping
 from app.services.text_postprocessing import apply_text_replacements
+
+# Граф и маппинг ролей считаем здесь, а не импортируем из role_detection:
+# тот модуль сейчас активно правит МЛщик (граф-первичный фикс), имена функций
+# в движении. Стриминг не должен ломаться от её рефакторинга.
 
 MAX_GAP = 1.0             # пауза длиннее — новая реплика
 MAX_UTTERANCE = 20.0      # реплика не длиннее — чтобы не копить бесконечно
@@ -40,11 +43,40 @@ UNKNOWN_ROLE = {"speaker_id": None, "role": "unknown", "display_name": "Неиз
 def graph_teacher(turns: list[dict[str, Any]]) -> str | None:
     """Преподаватель = спикер с максимумом уникальных соседей по таймлайну.
     Считается по одной диаризации, без текста — поэтому доступно до ASR."""
-    neighbours = calculate_neighbors(turns)
+    sequence: list[str] = []
+    for turn in sorted(turns, key=lambda t: t["start"]):
+        speaker = str(turn["speaker"])
+        if speaker == "UNKNOWN":
+            continue
+        if not sequence or sequence[-1] != speaker:
+            sequence.append(speaker)
+
+    neighbours: dict[str, set[str]] = defaultdict(set)
+    for first, second in zip(sequence, sequence[1:]):
+        if first != second:
+            neighbours[first].add(second)
+            neighbours[second].add(first)
+
     if neighbours:
-        return max(neighbours, key=lambda s: neighbours[s])
-    speakers = {t["speaker"] for t in turns}
+        return max(neighbours, key=lambda s: len(neighbours[s]))
+    speakers = {str(t["speaker"]) for t in turns if str(t["speaker"]) != "UNKNOWN"}
     return next(iter(speakers)) if speakers else None
+
+
+def speaker_mapping(turns: list[dict[str, Any]], teacher: str | None) -> dict[str, dict]:
+    """Преподавателю 0, остальным 1..N по первому появлению на таймлайне."""
+    mapping: dict[str, dict] = {}
+    if teacher is not None:
+        mapping[teacher] = {"speaker_id": 0, "role": "teacher", "display_name": "Преподаватель"}
+    next_id = 1
+    for turn in sorted(turns, key=lambda t: t["start"]):
+        speaker = str(turn["speaker"])
+        if speaker == "UNKNOWN" or speaker in mapping:
+            continue
+        mapping[speaker] = {"speaker_id": next_id, "role": "student",
+                            "display_name": f"Ученик {next_id}"}
+        next_id += 1
+    return mapping
 
 
 def _breaks(current: dict[str, Any], word: dict[str, Any], speaker: str) -> bool:
@@ -113,7 +145,7 @@ def stream_pipeline(pipeline, audio_path, work_dir="data/work") -> Iterator[dict
     diar = pipeline.diarization_service.diarize(normalized, duration)
     turns = diar["turns"]
     teacher = graph_teacher(turns)
-    mapping = create_speaker_mapping(turns, teacher_speaker=teacher) if teacher else {}
+    mapping = speaker_mapping(turns, teacher)
 
     yield {
         "type": "meta",
