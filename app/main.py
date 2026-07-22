@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import uuid
 from pathlib import Path
 
@@ -28,7 +29,18 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.services.streaming import stream_pipeline
 
-MAX_BYTES = 200 * 1024 * 1024
+# Лимит размера загрузки — из .env, чтобы совпадал с config.py и чтобы
+# под видео (файлы в гигабайты) не пришлось лезть в код. dotenv грузим
+# мягко: без torch, чтобы модуль импортировался и на машине без GPU.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
+MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "4000"))
+MAX_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 CHUNK_BYTES = 1024 * 1024
 UPLOAD_DIR = Path("data/uploads")
 RESULT_DIR = Path("data/results")

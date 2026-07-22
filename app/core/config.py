@@ -86,4 +86,7 @@ def load_settings() -> Settings:
             os.getenv("PARALLEL_GPU_STAGES"),
             default=True,
         ),
+        max_file_size_mb=int(
+            os.getenv("MAX_FILE_SIZE_MB", "4000")
+        ),
     )
