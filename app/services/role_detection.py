@@ -244,11 +244,10 @@ def detect_teacher(
         used_speech_share_tiebreaker = False
     else:
         scoring_basis = "teacher_markers"
-        candidates = (
-            list(scores)
-            if len(scores) <= 2
-            else graph_candidates
-        )
+        # Если граф не дал единственного лидера, следующий этап каскада
+        # оценивает всех спикеров. Иначе преподаватель с сильными
+        # маркерами, но меньшим числом соседей, был бы исключён заранее.
+        candidates = list(scores)
         candidate_ranking = sorted(
             candidates,
             key=lambda speaker: (

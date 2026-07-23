@@ -33,16 +33,10 @@ RULES: list[tuple[str, str]] = [
     (r"\bделить на\b", "/"),
     (r"\bразделить на\b", "/"),
     (r"\bумножить на\b", "*"),
-    # Составные сравнения должны идти раньше их коротких частей.
-    (r"\bне равно\b", "!="),
-    (r"\bбольше или равно\b", ">="),
-    (r"\bменьше или равно\b", "<="),
     (r"\bплюс\b", "+"),
     (r"\bминус\b", "-"),
     (r"\bравно\b", "="),
     (r"\bравняется\b", "="),
-    (r"\bбольше\b", ">"),
-    (r"\bменьше\b", "<"),
     # греческие
     (r"\bальфа\b", "alpha"),
     (r"\bбета\b", "beta"),
@@ -83,6 +77,40 @@ VARIABLES: dict[str, str] = {
     "ка": "k", "эй": "a", "би": "b", "цэ": "c",
 }
 
+MATH_OPERAND_PATTERN = (
+    r"(?:\d+(?:[.,]\d+)?|"
+    + "|".join(
+        sorted(
+            (
+                re.escape(word)
+                for word in (*VARIABLES, *NUMERALS)
+            ),
+            key=len,
+            reverse=True,
+        )
+    )
+    + r")"
+)
+
+COMPARISON_EXPRESSION = re.compile(
+    rf"(?<!\w){MATH_OPERAND_PATTERN}(?!\w)"
+    rf"\s+(?:не равно|больше(?: или равно)?|меньше(?: или равно)?)\s+"
+    rf"(?<!\w){MATH_OPERAND_PATTERN}(?!\w)",
+    re.IGNORECASE,
+)
+
+NORMALIZED_OPERAND_PATTERN = (
+    r"(?:\d+(?:[.,]\d+)?|[a-z](?:\^\d+)?)"
+)
+
+COMPARISON_RULES: list[tuple[str, str]] = [
+    ("не равно", "!="),
+    ("больше или равно", ">="),
+    ("меньше или равно", "<="),
+    ("больше", ">"),
+    ("меньше", "<"),
+]
+
 # Признак, что в реплике вообще есть математика — по нему решаем,
 # гнать ли сегмент через нормализацию и ставить ли has_math.
 MATH_TRIGGERS = re.compile(
@@ -94,7 +122,10 @@ MATH_TRIGGERS = re.compile(
 
 
 def has_math(text: str) -> bool:
-    return bool(MATH_TRIGGERS.search(text.lower()))
+    return bool(
+        MATH_TRIGGERS.search(text)
+        or COMPARISON_EXPRESSION.search(text)
+    )
 
 
 def normalize(text: str) -> str:
@@ -111,6 +142,17 @@ def normalize(text: str) -> str:
 
     for word, digit in NUMERALS.items():
         out = re.sub(rf"\b{word}\b", digit, out)
+
+    # Слова сравнения заменяем только между математическими операндами.
+    # Это сохраняет обычные фразы вроде "функция больше не используется".
+    for phrase, symbol in COMPARISON_RULES:
+        out = re.sub(
+            rf"(?P<left>{NORMALIZED_OPERAND_PATTERN})"
+            rf"\s+{phrase}\s+"
+            rf"(?P<right>{NORMALIZED_OPERAND_PATTERN})",
+            rf"\g<left> {symbol} \g<right>",
+            out,
+        )
 
     for pattern, replacement in RULES:
         out = re.sub(pattern, replacement, out)

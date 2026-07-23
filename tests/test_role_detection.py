@@ -172,3 +172,34 @@ def test_decisive_graph_works_with_fewer_than_five_transitions() -> None:
 
     assert result["teacher_speaker"] == "T"
     assert result["scoring_basis"] == "speaker_graph"
+
+
+def test_markers_consider_all_speakers_after_graph_tie() -> None:
+    sequence = [
+        ("T", "Ребята, откройте тетради и запишите формулу."),
+        ("A", "Ответ."),
+        ("C", "Ответ."),
+        ("B", "Ответ."),
+        ("D", "Ответ."),
+        ("B", "Ответ."),
+        ("A", "Ответ."),
+        ("B", "Ответ."),
+    ]
+    utterances = [
+        {
+            "start": index,
+            "end": index + 1,
+            "speaker": speaker,
+            "text": text,
+        }
+        for index, (speaker, text) in enumerate(sequence)
+    ]
+
+    result = detect_teacher(utterances)
+
+    assert result["scores"]["A"]["unique_neighbor_count"] == 3
+    assert result["scores"]["B"]["unique_neighbor_count"] == 3
+    assert result["scores"]["T"]["unique_neighbor_count"] == 1
+    assert result["teacher_speaker"] == "T"
+    assert result["scoring_basis"] == "teacher_markers"
+    assert result["used_speech_share_tiebreaker"] is False
