@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.services.mathnorm import annotate_item
 from configs.text_replacements import TEXT_REPLACEMENTS
 
 
@@ -46,15 +47,17 @@ def postprocess_asr_result(
 ) -> dict[str, Any]:
     result = dict(asr_result)
 
-    result["segments"] = [
-        {
+    result["segments"] = []
+    for segment in asr_result["segments"]:
+        processed_segment = {
             **segment,
             "text": apply_text_replacements(
                 str(segment["text"])
             ),
         }
-        for segment in asr_result["segments"]
-    ]
+        result["segments"].append(
+            annotate_item(processed_segment)
+        )
 
     result["words"] = [
         {

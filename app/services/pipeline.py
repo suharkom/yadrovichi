@@ -18,6 +18,7 @@ from app.services.audio import (
     validate_audio_file,
 )
 from app.services.diarization import DiarizationService
+from app.services.mathnorm import annotate_item
 from app.services.role_detection import (
     apply_roles,
     create_speaker_mapping,
@@ -187,6 +188,10 @@ class AudioProcessingPipeline:
             utterances=utterances,
             speaker_mapping=speaker_mapping,
         )
+        timeline = [
+            annotate_item(item)
+            for item in timeline
+        ]
 
         pipeline_elapsed_seconds = (
             time.perf_counter() - pipeline_started_at
