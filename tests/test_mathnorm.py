@@ -1,61 +1,70 @@
-from app.services.mathnorm import annotate, annotate_item, has_math
+from app.services.mathnorm import annotate, annotate_timeline
 
 
-def test_normalizes_spoken_equation() -> None:
-    text, contains_math = annotate(
+def test_spoken_equation_is_normalized() -> None:
+    llm_text, has_math = annotate(
         "Икс в квадрате плюс два икс равно нулю."
     )
 
-    assert contains_math is True
-    assert text == "x^2 + 2x = 0."
+    assert llm_text == "x^2 + 2x = 0."
+    assert has_math is True
 
 
-def test_normalizes_economics_equation() -> None:
-    text, contains_math = annotate(
-        "Уравнение эм равно пэ умножить на игрек."
+def test_plain_text_is_not_changed() -> None:
+    text = "В аудитории было двадцать студентов."
+
+    assert annotate(text) == (text, False)
+
+
+def test_compound_comparison_is_not_split() -> None:
+    llm_text, has_math = annotate("Икс не равно нулю.")
+
+    assert llm_text == "x != 0."
+    assert has_math is True
+
+
+def test_spoken_comparison_is_normalized() -> None:
+    assert annotate("Икс больше нуля.") == (
+        "x > 0.",
+        True,
     )
 
-    assert contains_math is True
-    assert text == "уравнение m = p * y."
 
-
-def test_normalizes_spoken_arithmetic_without_inventing_equality() -> None:
-    text, contains_math = annotate(
-        "Минус восемьдесят разделить на двадцать, минус четыре."
+def test_spoken_compound_comparison_is_normalized() -> None:
+    assert annotate("Икс меньше или равно десяти.") == (
+        "x <= 10.",
+        True,
     )
 
-    assert contains_math is True
-    assert text == "- 80 / 20, - 4."
+
+def test_comparison_word_in_math_topic_is_not_replaced_without_operands() -> None:
+    llm_text, has_math = annotate(
+        "Эта функция больше не используется."
+    )
+
+    assert llm_text == "эта функция больше не используется."
+    assert has_math is True
 
 
-def test_does_not_treat_everyday_equal_as_math() -> None:
-    text = "Мне всё равно, давайте продолжим."
-
-    assert has_math(text) is False
-    assert annotate(text) == (text, False)
-
-
-def test_does_not_treat_splitting_assignment_as_math() -> None:
-    text = "Давайте разделим задание на пункт А и пункт Б."
-
-    assert annotate(text) == (text, False)
-
-
-def test_does_not_replace_plain_comparison_words() -> None:
-    text = "Выпуск меньше потенциального на 20 процентов."
+def test_comparison_in_plain_speech_is_not_math() -> None:
+    text = "Стало больше вопросов."
 
     assert annotate(text) == (text, False)
 
 
-def test_preserves_original_text_in_annotated_item() -> None:
-    item = {
-        "start": 1.0,
-        "end": 2.0,
-        "text": "Икс плюс два.",
-    }
+def test_timeline_keeps_original_text_and_adds_llm_fields() -> None:
+    timeline = [
+        {
+            "start": 1.0,
+            "end": 2.0,
+            "text": "Икс плюс два равно нулю.",
+            "role": "teacher",
+        }
+    ]
 
-    result = annotate_item(item)
+    result = annotate_timeline(timeline)
 
-    assert result["text"] == "Икс плюс два."
-    assert result["llm_text"] == "x + 2."
-    assert result["has_math"] is True
+    assert result[0]["text"] == "Икс плюс два равно нулю."
+    assert result[0]["llm_text"] == "x + 2 = 0."
+    assert result[0]["has_math"] is True
+    assert "llm_text" not in timeline[0]

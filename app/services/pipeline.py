@@ -19,7 +19,7 @@ from app.services.audio import (
     validate_audio_file,
 )
 from app.services.diarization import DiarizationService
-from app.services.mathnorm import annotate_item
+from app.services.mathnorm import annotate_timeline
 from app.services.role_detection import (
     apply_roles,
     create_speaker_mapping,
@@ -197,14 +197,12 @@ class AudioProcessingPipeline:
             ],
         )
 
-        timeline = apply_roles(
-            utterances=utterances,
-            speaker_mapping=speaker_mapping,
+        timeline = annotate_timeline(
+            apply_roles(
+                utterances=utterances,
+                speaker_mapping=speaker_mapping,
+            )
         )
-        timeline = [
-            annotate_item(item)
-            for item in timeline
-        ]
 
         pipeline_elapsed_seconds = (
             time.perf_counter() - pipeline_started_at
@@ -235,6 +233,7 @@ class AudioProcessingPipeline:
                 "speaker_smoothing_max_words": 3,
                 "speaker_smoothing_max_neighbor_gap_seconds": 0.5,
                 "text_replacements_enabled": True,
+                "math_normalization_enabled": True,
                 "stage_execution_mode": (
                     "parallel" if run_in_parallel else "sequential"
                 ),

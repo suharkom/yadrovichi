@@ -29,11 +29,6 @@ RULES: list[tuple[str, str]] = [
     # корни
     (r"\bквадратный корень из\b", r"sqrt"),
     (r"\bкорень из\b", r"sqrt"),
-    # Сначала длинные сравнения, иначе короткое "равно"
-    # разрушит конструкции "не равно" и "больше или равно".
-    (r"\bбольше или равно\b", ">="),
-    (r"\bменьше или равно\b", "<="),
-    (r"\bне равно\b", "!="),
     # дроби и операции
     (r"\bделить на\b", "/"),
     (r"\bразделить на\b", "/"),
@@ -73,54 +68,64 @@ NUMERALS: dict[str, str] = {
     "пять": "5", "пяти": "5", "шесть": "6", "шести": "6",
     "семь": "7", "семи": "7", "восемь": "8", "восьми": "8",
     "девять": "9", "девяти": "9", "десять": "10", "десяти": "10",
-    "двадцать": "20", "двадцати": "20",
-    "тридцать": "30", "тридцати": "30",
-    "сорок": "40", "сорока": "40",
-    "пятьдесят": "50", "пятидесяти": "50",
-    "шестьдесят": "60", "шестидесяти": "60",
-    "семьдесят": "70", "семидесяти": "70",
-    "восемьдесят": "80", "восьмидесяти": "80",
-    "девяносто": "90", "девяноста": "90",
     "сто": "100", "тысяча": "1000", "тысячи": "1000",
 }
 
 # Переменные: одиночная буква как слово. "икс" -> x, но "иксы" не трогаем.
 VARIABLES: dict[str, str] = {
     "икс": "x", "игрек": "y", "зет": "z", "эн": "n", "эм": "m",
-    "ка": "k", "пэ": "p", "эй": "a", "би": "b", "цэ": "c",
+    "ка": "k", "эй": "a", "би": "b", "цэ": "c",
 }
 
-# Сильные признаки математики. Обычные слова "равно", "больше",
-# "меньше", "плюс" и "минус" сюда намеренно не входят: иначе фраза
-# "мне всё равно" будет ошибочно переписана как "мне всё =".
-STRONG_MATH_TRIGGERS = re.compile(
-    r"\b(в квадрате|в кубе|в степени|корень из|"
-    r"синус|косинус|тангенс|логарифм|интеграл|"
-    r"производн\w*|дискриминант\w*|уравнени\w*|формул\w*|функци\w*|"
-    r"коэффициент\w*|альфа|бета|гамма|дельта|сигма|тета|ламбда|"
-    r"икс|игрек|зет|эн|эм|пэ)\b",
+MATH_OPERAND_PATTERN = (
+    r"(?:\d+(?:[.,]\d+)?|"
+    + "|".join(
+        sorted(
+            (
+                re.escape(word)
+                for word in (*VARIABLES, *NUMERALS)
+            ),
+            key=len,
+            reverse=True,
+        )
+    )
+    + r")"
+)
+
+COMPARISON_EXPRESSION = re.compile(
+    rf"(?<!\w){MATH_OPERAND_PATTERN}(?!\w)"
+    rf"\s+(?:не равно|больше(?: или равно)?|меньше(?: или равно)?)\s+"
+    rf"(?<!\w){MATH_OPERAND_PATTERN}(?!\w)",
     re.IGNORECASE,
 )
-MATH_OPERAND_PATTERN = (
-    r"(?:\d+(?:[.,]\d+)?|икс|игрек|зет|эн|эм|пэ|"
-    r"ноль|нуль|один|одна|два|две|три|четыре|пять|шесть|семь|"
-    r"восемь|девять|десять|двадцать|тридцать|сорок|пятьдесят|"
-    r"шестьдесят|семьдесят|восемьдесят|девяносто|сто)"
+
+NORMALIZED_OPERAND_PATTERN = (
+    r"(?:\d+(?:[.,]\d+)?|[a-z](?:\^\d+)?)"
 )
-WEAK_MATH_EXPRESSION = re.compile(
-    r"\b(?:равно|равняется|не равно|плюс|минус|"
-    r"умножить на|разделить на|делить на)\s+"
-    + MATH_OPERAND_PATTERN
-    + r"\b",
+
+COMPARISON_RULES: list[tuple[str, str]] = [
+    ("не равно", "!="),
+    ("больше или равно", ">="),
+    ("меньше или равно", "<="),
+    ("больше", ">"),
+    ("меньше", "<"),
+]
+
+# Признак, что в реплике вообще есть математика — по нему решаем,
+# гнать ли сегмент через нормализацию и ставить ли has_math.
+MATH_TRIGGERS = re.compile(
+    r"\b(в квадрате|в кубе|в степени|корень из|равно|равняется|плюс|минус|"
+    r"умножить|разделить|делить на|синус|косинус|тангенс|логарифм|интеграл|"
+    r"производная|дискриминант|уравнени|формул|функци)\w*\b",
     re.IGNORECASE,
 )
 
 
 def has_math(text: str) -> bool:
-    normalized = text.lower().replace("ё", "е")
-    if STRONG_MATH_TRIGGERS.search(normalized):
-        return True
-    return bool(WEAK_MATH_EXPRESSION.search(normalized))
+    return bool(
+        MATH_TRIGGERS.search(text)
+        or COMPARISON_EXPRESSION.search(text)
+    )
 
 
 def normalize(text: str) -> str:
@@ -132,13 +137,22 @@ def normalize(text: str) -> str:
     """
     out = text.lower().replace("ё", "е")
 
-    out = re.sub(r"\bдва с половиной\b", "2.5", out)
-
     for word, symbol in VARIABLES.items():
         out = re.sub(rf"\b{word}\b", symbol, out)
 
     for word, digit in NUMERALS.items():
         out = re.sub(rf"\b{word}\b", digit, out)
+
+    # Слова сравнения заменяем только между математическими операндами.
+    # Это сохраняет обычные фразы вроде "функция больше не используется".
+    for phrase, symbol in COMPARISON_RULES:
+        out = re.sub(
+            rf"(?P<left>{NORMALIZED_OPERAND_PATTERN})"
+            rf"\s+{phrase}\s+"
+            rf"(?P<right>{NORMALIZED_OPERAND_PATTERN})",
+            rf"\g<left> {symbol} \g<right>",
+            out,
+        )
 
     for pattern, replacement in RULES:
         out = re.sub(pattern, replacement, out)
@@ -147,8 +161,6 @@ def normalize(text: str) -> str:
     out = re.sub(r"\bsqrt\s+(?:из\s+)?([\w\d^]+)", r"sqrt(\1)", out)
     # "2 x" -> "2x": коэффициент слипается с переменной
     out = re.sub(r"\b(\d+)\s+([a-z])\b", r"\1\2", out)
-    # "p y" -> "p*y": произведение двух названных переменных.
-    out = re.sub(r"\b([a-z])\s+([a-z])\b", r"\1*\2", out)
     # схлопнуть пробелы вокруг операторов: "x ^2 + 2 x" -> "x^2 + 2x"
     out = re.sub(r"\s*\^\s*", "^", out)
     out = re.sub(r"\s{2,}", " ", out)
@@ -166,10 +178,19 @@ def annotate(text: str) -> tuple[str, bool]:
     return normalize(text), True
 
 
-def annotate_item(item: dict[str, Any]) -> dict[str, Any]:
-    """Добавляет безопасное LLM-представление, сохраняя исходный text."""
-    result = dict(item)
-    llm_text, contains_math = annotate(str(result.get("text", "")))
-    result["llm_text"] = llm_text
-    result["has_math"] = contains_math
+def annotate_timeline(
+    timeline: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Добавить LLM-текст и признак математики, сохранив исходный text."""
+    result: list[dict[str, Any]] = []
+
+    for utterance in timeline:
+        item = dict(utterance)
+        llm_text, math_found = annotate(
+            str(item.get("text", ""))
+        )
+        item["llm_text"] = llm_text
+        item["has_math"] = math_found
+        result.append(item)
+
     return result

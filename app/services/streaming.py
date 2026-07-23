@@ -30,6 +30,7 @@ from app.services.audio import (
     normalize_audio,
     validate_audio_file,
 )
+from app.services.mathnorm import annotate
 from app.services.text_postprocessing import apply_text_replacements
 
 # Граф и маппинг ролей считаем здесь, а не импортируем из role_detection:
@@ -94,6 +95,7 @@ def _finish(current: dict[str, Any], mapping: dict[str, dict], index: int) -> di
     """Собрать реплику: склейка слов, чистка ошибок ASR, роль. Чистая
     функция — гоняется в пуле параллельно с распознаванием следующей."""
     text = apply_text_replacements(join_word_tokens(current["words"]))
+    llm_text, math_found = annotate(text)
     role = mapping.get(current["speaker"], UNKNOWN_ROLE)
     return {
         "type": "utterance",
@@ -102,6 +104,8 @@ def _finish(current: dict[str, Any], mapping: dict[str, dict], index: int) -> di
         "end": round(current["end"], 3),
         "source_speaker": current["speaker"],
         "text": text,
+        "llm_text": llm_text,
+        "has_math": math_found,
         **role,
     }
 
