@@ -23,6 +23,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Iterator
 
+from app.services import checkpoint
 from app.services.alignment import assign_speaker_to_word, join_word_tokens
 from app.services.audio import (
     get_audio_duration,
@@ -141,52 +142,63 @@ def stream_pipeline(pipeline, audio_path, work_dir="data/work") -> Iterator[dict
 
     started = time.perf_counter()
 
-    # 1-2. Диаризация целиком → роли из графа (без текста)
-    diar = pipeline.diarization_service.diarize(normalized, duration)
-    turns = diar["turns"]
-    teacher = graph_teacher(turns)
-    mapping = speaker_mapping(turns, teacher)
+    # Потоковый чекпоинт: каждая отданная строка сразу дублируется на диск.
+    # Оборвётся соединение — распознанное не пропадёт, лежит в stream.jsonl.
+    ckpt = checkpoint.StreamCheckpoint(checkpoint.cache_key(source))
 
-    yield {
-        "type": "meta",
-        "audio_seconds": round(duration, 2),
-        "speaker_count": diar["speaker_count"],
-        "teacher": teacher,
-        "diarization_rtf": round(diar["rtf"], 4),
-        "speaker_mapping": mapping,
-    }
+    def emit(item: dict[str, Any]) -> dict[str, Any]:
+        ckpt.write(item)
+        return item
 
-    # 3-4. Потоковый ASR + параллельная постобработка предыдущей реплики
-    current: dict[str, Any] | None = None
-    index = 0
-    pending: deque[Future] = deque()
+    try:
+        # 1-2. Диаризация целиком → роли из графа (без текста)
+        diar = pipeline.diarization_service.diarize(normalized, duration)
+        turns = diar["turns"]
+        teacher = graph_teacher(turns)
+        mapping = speaker_mapping(turns, teacher)
 
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        for word in _stream_words(pipeline.asr_service, normalized, settings):
-            speaker = assign_speaker_to_word(word, turns)
-            if current is None or _breaks(current, word, speaker):
-                if current is not None:
-                    pending.append(pool.submit(_finish, current, mapping, index))
-                    index += 1
-                    while pending and pending[0].done():
-                        yield pending.popleft().result()
-                current = {"start": word["start"], "end": word["end"],
-                           "speaker": speaker, "words": [word["text"]]}
-            else:
-                current["end"] = word["end"]
-                current["words"].append(word["text"])
+        yield emit({
+            "type": "meta",
+            "audio_seconds": round(duration, 2),
+            "speaker_count": diar["speaker_count"],
+            "teacher": teacher,
+            "diarization_rtf": round(diar["rtf"], 4),
+            "speaker_mapping": mapping,
+        })
 
-        if current is not None:
-            pending.append(pool.submit(_finish, current, mapping, index))
-            index += 1
+        # 3-4. Потоковый ASR + параллельная постобработка предыдущей реплики
+        current: dict[str, Any] | None = None
+        index = 0
+        pending: deque[Future] = deque()
 
-        for future in pending:
-            yield future.result()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            for word in _stream_words(pipeline.asr_service, normalized, settings):
+                speaker = assign_speaker_to_word(word, turns)
+                if current is None or _breaks(current, word, speaker):
+                    if current is not None:
+                        pending.append(pool.submit(_finish, current, mapping, index))
+                        index += 1
+                        while pending and pending[0].done():
+                            yield emit(pending.popleft().result())
+                    current = {"start": word["start"], "end": word["end"],
+                               "speaker": speaker, "words": [word["text"]]}
+                else:
+                    current["end"] = word["end"]
+                    current["words"].append(word["text"])
 
-    elapsed = time.perf_counter() - started
-    yield {
-        "type": "done",
-        "utterance_count": index,
-        "pipeline_rtf": round(elapsed / duration, 4) if duration else 0.0,
-        "diarization_rtf": round(diar["rtf"], 4),
-    }
+            if current is not None:
+                pending.append(pool.submit(_finish, current, mapping, index))
+                index += 1
+
+            for future in pending:
+                yield emit(future.result())
+
+        elapsed = time.perf_counter() - started
+        yield emit({
+            "type": "done",
+            "utterance_count": index,
+            "pipeline_rtf": round(elapsed / duration, 4) if duration else 0.0,
+            "diarization_rtf": round(diar["rtf"], 4),
+        })
+    finally:
+        ckpt.close()
