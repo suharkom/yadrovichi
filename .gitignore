@@ -21,3 +21,4 @@ checkpoint.jsonl
 
 artifacts/
 data/work/
+data/checkpoints/

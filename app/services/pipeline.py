@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import Settings
+from app.services import checkpoint
 from app.services.alignment import (
     assign_speakers_to_words,
     build_utterances,
@@ -113,21 +114,33 @@ class AudioProcessingPipeline:
             # Диаризация ПЕРВОЙ: pyannote (torch) инициализирует CUDA до
             # того, как faster-whisper (CTranslate2) её тронет, иначе NVML
             # внутри torch падает ассертом.
-            print("Запускаю диаризацию...")
+            # Каждую стадию кешируем на диск: перезапуск не гоняет GPU
+            # заново (кеш включается USE_CHECKPOINTS, замеры RTF не трогает).
+            key = checkpoint.cache_key(source_path)
             stages_started_at = time.perf_counter()
 
-            diarization_result = (
-                self.diarization_service.diarize(
+            diarization_result = checkpoint.load_stage(key, "diarization")
+            if diarization_result is None:
+                print("Запускаю диаризацию...")
+                diarization_result = self.diarization_service.diarize(
                     audio_path=normalized_path,
                     audio_duration=audio_duration,
                 )
-            )
+                checkpoint.save_stage(key, "diarization", diarization_result)
+            else:
+                print("Диаризация — из чекпоинта.")
 
-            print("Запускаю транскрибацию...")
-            asr_result = self.asr_service.transcribe(
-                audio_path=normalized_path,
-                audio_duration=audio_duration,
-            )
+            asr_result = checkpoint.load_stage(key, "asr")
+            if asr_result is None:
+                print("Запускаю транскрибацию...")
+                asr_result = self.asr_service.transcribe(
+                    audio_path=normalized_path,
+                    audio_duration=audio_duration,
+                )
+                checkpoint.save_stage(key, "asr", asr_result)
+            else:
+                print("Транскрибация — из чекпоинта.")
+
             stages_elapsed_seconds = (
                 time.perf_counter() - stages_started_at
             )
