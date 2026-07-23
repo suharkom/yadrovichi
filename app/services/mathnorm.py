@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 # Порядок важен: длинные конструкции разбираются раньше коротких,
 # иначе "в квадрате" съест "квадратный корень".
@@ -32,13 +33,14 @@ RULES: list[tuple[str, str]] = [
     (r"\bделить на\b", "/"),
     (r"\bразделить на\b", "/"),
     (r"\bумножить на\b", "*"),
+    # Составные сравнения должны идти раньше их коротких частей.
+    (r"\bне равно\b", "!="),
+    (r"\bбольше или равно\b", ">="),
+    (r"\bменьше или равно\b", "<="),
     (r"\bплюс\b", "+"),
     (r"\bминус\b", "-"),
     (r"\bравно\b", "="),
     (r"\bравняется\b", "="),
-    (r"\bне равно\b", "!="),
-    (r"\bбольше или равно\b", ">="),
-    (r"\bменьше или равно\b", "<="),
     (r"\bбольше\b", ">"),
     (r"\bменьше\b", "<"),
     # греческие
@@ -132,3 +134,21 @@ def annotate(text: str) -> tuple[str, bool]:
     if not has_math(text):
         return text, False
     return normalize(text), True
+
+
+def annotate_timeline(
+    timeline: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Добавить LLM-текст и признак математики, сохранив исходный text."""
+    result: list[dict[str, Any]] = []
+
+    for utterance in timeline:
+        item = dict(utterance)
+        llm_text, math_found = annotate(
+            str(item.get("text", ""))
+        )
+        item["llm_text"] = llm_text
+        item["has_math"] = math_found
+        result.append(item)
+
+    return result
