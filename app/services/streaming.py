@@ -157,6 +157,8 @@ def stream_pipeline(pipeline, audio_path, work_dir="data/work") -> Iterator[dict
     try:
         # 1-2. Диаризация целиком → роли из графа (без текста)
         diar = pipeline.diarization_service.diarize(normalized, duration)
+        # Снять pyannote с GPU перед потоковым ASR: ~2 ГБ запаса на общей карте.
+        pipeline.diarization_service.offload()
         turns = diar["turns"]
         teacher = graph_teacher(turns)
         mapping = speaker_mapping(turns, teacher)
