@@ -8,10 +8,14 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
 import gradio as gr
+
+# Ниже этого порога уверенности ASR слово считаем сомнительным и подсвечиваем.
+UNCERTAIN_THRESHOLD = 0.5
 
 # Цвет по спикеру: преподаватель отдельно, ученики оттенками.
 COLORS = ["#c2410c", "#1d4ed8", "#15803d", "#7e22ce", "#b91c1c", "#0e7490"]
@@ -44,6 +48,29 @@ def _color(speaker_id) -> str:
     return COLORS[int(speaker_id) % len(COLORS)]
 
 
+def _text_with_confidence(item: dict) -> str:
+    """Текст реплики с подсветкой низкоуверенных слов (пунктир + подсказка).
+    Если по-словных данных нет (старый прогон/батч) — обычный текст."""
+    words = item.get("words")
+    if not words:
+        return item.get("text", "")
+    parts: list[str] = []
+    for word in words:
+        token = str(word.get("text", "")).strip()
+        if not token:
+            continue
+        prob = word.get("probability")
+        if prob is not None and prob < UNCERTAIN_THRESHOLD:
+            parts.append(
+                f"<span style='border-bottom:2px dotted #f59e0b;cursor:help' "
+                f"title='низкая уверенность {prob * 100:.0f}%'>{token}</span>"
+            )
+        else:
+            parts.append(token)
+    html = " ".join(parts)
+    return re.sub(r"\s+([,.;:!?…])", r"\1", html)
+
+
 def _render(timeline: list[dict]) -> str:
     rows = []
     for item in timeline:
@@ -51,7 +78,7 @@ def _render(timeline: list[dict]) -> str:
         stamp = f"{int(start) // 60:02d}:{int(start) % 60:02d}"
         name = item.get("display_name", item.get("source_speaker", "?"))
         color = _color(item.get("speaker_id"))
-        text = item.get("text", "")
+        text = _text_with_confidence(item)
         rows.append(
             f"<div style='margin:.6em 0;padding-left:.8em;"
             f"border-left:3px solid {color}'>"
@@ -311,6 +338,11 @@ def build() -> gr.Blocks:
                 ribbon = gr.HTML()
                 with gr.Tabs():
                     with gr.Tab("Расшифровка"):
+                        gr.Markdown(
+                            "<span style='opacity:.6;font-size:.85em'>Пунктиром "
+                            "подчёркнуты слова с низкой уверенностью "
+                            "распознавания.</span>"
+                        )
                         timeline = gr.HTML()
                     with gr.Tab("Вовлечённость"):
                         engagement = gr.HTML()
