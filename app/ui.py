@@ -21,6 +21,9 @@ UNCERTAIN_THRESHOLD = 0.5
 
 # Каждые столько выплюнутых реплик прогоняем батч-постобработку.
 REFINE_EVERY = 10
+# Обновляем интерфейс не каждую реплику, а раз в столько — чтобы перерисовка
+# растущего таймлайна не тормозила обработку (REFINE_EVERY кратно этому).
+RENDER_EVERY = 5
 
 # Цвет по спикеру: преподаватель отдельно, ученики оттенками.
 COLORS = ["#c2410c", "#1d4ed8", "#15803d", "#7e22ce", "#b91c1c", "#0e7490"]
@@ -40,31 +43,25 @@ HEAD = (
     "font-size:22px;line-height:1;background:transparent !important;"
     "border:none !important;box-shadow:none !important;}"
     "</style>"
-    # Общий фильтр расшифровки: учитывает и поиск, и роль (пересечение).
-    "<script>window.__applyTranscriptFilter=function(){"
-    "var box=document.querySelector('#transcript-box');if(!box)return;"
-    "var q=(box.dataset.query||'').toLowerCase();var role=box.dataset.role||'';"
-    "box.querySelectorAll('.utt').forEach(function(el){"
-    "var okText=!q||el.textContent.toLowerCase().indexOf(q)>=0;"
-    "var okRole=!role||role==='all'||el.dataset.role===role;"
-    "el.style.display=(okText&&okRole)?'':'none';});};</script>"
 )
 CSS = ""
 
+# Поиск и фильтр по роли — самодостаточные обработчики (без глобальной функции:
+# Gradio не выполняет <script> из head). Состояние храним в data-атрибутах body,
+# фильтр — пересечение текста и роли.
+_FILTER_BODY = (
+    "var q=(document.body.dataset.tq||'').toLowerCase();"
+    "var role=document.body.dataset.tr||'all';"
+    "document.querySelectorAll('.utt').forEach(function(el){"
+    "var okText=!q||el.textContent.toLowerCase().indexOf(q)>=0;"
+    "var okRole=role==='all'||el.getAttribute('data-role')===role;"
+    "el.style.display=(okText&&okRole)?'':'none';});"
+)
+SEARCH_JS = "(q)=>{document.body.dataset.tq=q||'';" + _FILTER_BODY + "}"
+ROLE_JS = "(r)=>{document.body.dataset.tr=r||'all';" + _FILTER_BODY + "}"
+
 # Переключатель темы без перезагрузки: Gradio вешает класс dark на <body>.
 THEME_TOGGLE_JS = "() => { document.body.classList.toggle('dark'); }"
-
-# Поиск и фильтр по роли пишут своё условие в data-атрибуты и зовут общий фильтр.
-SEARCH_JS = (
-    "(q)=>{var b=document.querySelector('#transcript-box');"
-    "if(b){b.dataset.query=q||'';"
-    "window.__applyTranscriptFilter&&window.__applyTranscriptFilter();}}"
-)
-ROLE_JS = (
-    "(r)=>{var b=document.querySelector('#transcript-box');"
-    "if(b){b.dataset.role=r||'all';"
-    "window.__applyTranscriptFilter&&window.__applyTranscriptFilter();}}"
-)
 
 
 def _color(speaker_id) -> str:
@@ -115,26 +112,35 @@ def _render(timeline: list[dict]) -> str:
     return "".join(rows) or "<i>пусто</i>"
 
 
-def _ribbon_html(ribbon: list[dict]) -> str:
-    """Цветная лента доминирования: полоса = корзина времени, цвет по спикеру,
-    кто говорил дольше всех. Молчание — серым. Идёт НАД всей расшифровкой."""
-    if not ribbon:
+def _ribbon_html(timeline: list[dict], duration: float | None = None) -> str:
+    """Цветная лента спикеров: каждая реплика — отрезок своим цветом (как в
+    тексте), пауза между репликами — серым. Зелёный виден там, где реально
+    говорит Ученик 2. Идёт НАД всей расшифровкой."""
+    if not timeline:
         return ""
-    total = sum(item["end"] - item["start"] for item in ribbon) or 1.0
+    ordered = sorted(timeline, key=lambda u: float(u["start"]))
+    span = float(duration) if duration else float(ordered[-1]["end"])
+    span = span or 1.0
     cells = []
-    for item in ribbon:
-        width = (item["end"] - item["start"]) / total * 100
-        if item.get("dominant_speaker_id") is None:
-            color, label = "rgba(128,128,128,.25)", "тишина"
-        else:
-            color = _color(item["dominant_speaker_id"])
-            label = item.get("dominant_display_name", "?")
-        start = int(item["start"])
-        tip = f"{start // 60:02d}:{start % 60:02d} · {label}"
+    cursor = 0.0
+    for utt in ordered:
+        start = float(utt["start"])
+        end = float(utt["end"])
+        if start > cursor:  # пауза (тишина) между репликами
+            gap = (start - cursor) / span * 100
+            cells.append(
+                f"<div style='flex:{gap:.4f} 0 0;height:26px;"
+                f"background:rgba(128,128,128,.2)'></div>"
+            )
+        width = max(0.0, end - start) / span * 100
+        color = _color(utt.get("speaker_id"))
+        name = utt.get("display_name", "?")
+        tip = f"{int(start) // 60:02d}:{int(start) % 60:02d} · {name}"
         cells.append(
             f"<div title='{tip}' style='flex:{width:.4f} 0 0;height:26px;"
             f"background:{color}'></div>"
         )
+        cursor = max(cursor, end)
     return (
         "<div style='font-weight:600;margin:.2em 0'>Лента спикеров</div>"
         "<div style='display:flex;width:100%;border-radius:5px;"
@@ -260,6 +266,7 @@ def process(file):
 
     src = Path(file.name if hasattr(file, "name") else file)
     collected: list[dict] = []
+    refined_count = 0
     meta: dict = {}
 
     # Старт нового прогона: чистим ленту и график от прошлого файла, как и текст.
@@ -287,11 +294,15 @@ def process(file):
             )
         elif item["type"] == "utterance":
             collected.append(item)
-            # Батч-постобработка и обновление ленты/метрик раз в REFINE_EVERY реплик.
+            # Копим реплики, дёргаем UI раз в RENDER_EVERY — иначе перерисовка
+            # растущего таймлайна на каждую реплику тормозит обработку.
+            if len(collected) % RENDER_EVERY != 0:
+                continue
             if len(collected) % REFINE_EVERY == 0:
-                refine_utterances(collected)
+                refine_utterances(collected[refined_count:])  # только новые реплики
+                refined_count = len(collected)
                 a = _analytics_of(collected, meta)
-                ribbon_val = _ribbon_html(a["ribbon"])
+                ribbon_val = _ribbon_html(collected, meta.get("audio_seconds"))
                 eng_val = _engagement_html(a)
             else:
                 ribbon_val = gr.update()
@@ -305,7 +316,7 @@ def process(file):
                 gr.update(),
             )
         elif item["type"] == "done":
-            refine_utterances(collected)  # финальная батч-постобработка остатка
+            refine_utterances(collected[refined_count:])  # дочистить остаток
             rtf = item["pipeline_rtf"]
             verdict = "укладываемся" if rtf <= 0.4 else "ПРЕВЫШЕН бюджет 0.4"
             RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -341,7 +352,7 @@ def process(file):
             )
             a = _analytics_of(collected, meta)
             yield (
-                _ribbon_html(a["ribbon"]),
+                _ribbon_html(collected, meta.get("audio_seconds")),
                 _render(collected),
                 status,
                 export_files,
@@ -356,8 +367,13 @@ def load_history(path: str):
         return "", "", "<i>Выберите прогон</i>"
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     timeline = data.get("timeline", [])
-    a = _analytics_of(timeline, data.get("meta", {}))
-    return _ribbon_html(a["ribbon"]), _engagement_html(a), _render(timeline)
+    meta = data.get("meta", {})
+    a = _analytics_of(timeline, meta)
+    return (
+        _ribbon_html(timeline, meta.get("audio_seconds")),
+        _engagement_html(a),
+        _render(timeline),
+    )
 
 
 def _dict_view():
