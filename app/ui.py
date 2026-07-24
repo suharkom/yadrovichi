@@ -51,16 +51,13 @@ CSS = ""
 # фильтр — пересечение текста и роли.
 _FILTER_BODY = (
     "var q=(document.body.dataset.tq||'').toLowerCase();"
-    "var role=document.body.dataset.tr||'all';"
     "var spk=document.body.dataset.ts||'all';"
-    "document.querySelectorAll('.utt').forEach(function(el){"
+    "document.querySelectorAll('#transcript-box .utt').forEach(function(el){"
     "var okText=!q||el.textContent.toLowerCase().indexOf(q)>=0;"
-    "var okRole=role==='all'||el.getAttribute('data-role')===role;"
     "var okSpk=spk==='all'||el.getAttribute('data-speaker')===spk;"
-    "el.style.display=(okText&&okRole&&okSpk)?'':'none';});"
+    "el.style.display=(okText&&okSpk)?'':'none';});"
 )
 SEARCH_JS = "(q)=>{document.body.dataset.tq=q||'';" + _FILTER_BODY + "}"
-ROLE_JS = "(r)=>{document.body.dataset.tr=r||'all';" + _FILTER_BODY + "}"
 SPEAKER_JS = "(s)=>{document.body.dataset.ts=s||'all';" + _FILTER_BODY + "}"
 
 # Переключатель темы без перезагрузки: Gradio вешает класс dark на <body>.
@@ -105,8 +102,7 @@ def _render(timeline: list[dict]) -> str:
         color = _color(item.get("speaker_id"))
         text = _text_with_confidence(item)
         rows.append(
-            f"<div class='utt' data-role='{item.get('role', 'unknown')}' "
-            f"data-speaker='{name}' "
+            f"<div class='utt' data-speaker='{name}' "
             f"style='margin:.6em 0;padding-left:.8em;"
             f"border-left:3px solid {color}'>"
             f"<span style='opacity:.6;font-family:monospace'>{stamp}</span> "
@@ -249,6 +245,19 @@ def _analytics_of(collected: list[dict], meta: dict) -> dict:
     )
 
 
+def _speaker_choices(timeline: list[dict]) -> list[tuple[str, str]]:
+    """Список спикеров ИМЕННО этого прогона (по порядку speaker_id) для фильтра.
+    До прогона — только «Все»; число и названия зависят от файла."""
+    seen: dict[str, int] = {}
+    for utt in timeline:
+        name = utt.get("display_name", "?")
+        if name not in seen:
+            sid = utt.get("speaker_id")
+            seen[name] = sid if sid is not None else 999
+    ordered = sorted(seen.items(), key=lambda kv: kv[1])
+    return [("Все спикеры", "all")] + [(name, name) for name, _ in ordered]
+
+
 def _history_choices() -> list[tuple[str, str]]:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     files = sorted(RESULTS_DIR.glob("run_*.json"), reverse=True)
@@ -262,7 +271,7 @@ def process(file):
     блок вовлечённости, список истории.
     """
     if file is None:
-        yield "", "<i>Загрузите файл</i>", "", None, "", gr.update()
+        yield "", "<i>Загрузите файл</i>", "", None, "", gr.update(), gr.update()
         return
 
     from app.main import WORK_DIR, get_pipeline
@@ -281,6 +290,7 @@ def process(file):
         None,
         "",
         gr.update(),
+        gr.update(),
     )
 
     for item in stream_pipeline(get_pipeline(), src, WORK_DIR):
@@ -293,6 +303,7 @@ def process(file):
                 f"преподаватель {item.get('teacher', '?')} · "
                 f"диаризация RTF {item['diarization_rtf']:.3f}",
                 None,
+                gr.update(),
                 gr.update(),
                 gr.update(),
             )
@@ -317,6 +328,7 @@ def process(file):
                 f"Реплик получено: {len(collected)}…",
                 gr.update(),
                 eng_val,
+                gr.update(),
                 gr.update(),
             )
         elif item["type"] == "done":
@@ -362,6 +374,7 @@ def process(file):
                 export_files,
                 _engagement_html(a),
                 gr.update(choices=_history_choices()),
+                gr.update(choices=_speaker_choices(collected), value="all"),
             )
 
 
@@ -420,26 +433,8 @@ def build() -> gr.Blocks:
                                 container=False,
                                 scale=3,
                             )
-                            role_filter = gr.Radio(
-                                choices=[
-                                    ("Все", "all"),
-                                    ("Преподаватель", "teacher"),
-                                    ("Ученики", "student"),
-                                ],
-                                value="all",
-                                show_label=False,
-                                container=False,
-                                scale=2,
-                            )
                             speaker_filter = gr.Dropdown(
-                                choices=[
-                                    ("Спикер: все", "all"),
-                                    ("Преподаватель", "Преподаватель"),
-                                    ("Ученик 1", "Ученик 1"),
-                                    ("Ученик 2", "Ученик 2"),
-                                    ("Ученик 3", "Ученик 3"),
-                                    ("Неизвестный спикер", "Неизвестный спикер"),
-                                ],
+                                choices=[("Все спикеры", "all")],
                                 value="all",
                                 show_label=False,
                                 container=False,
@@ -486,7 +481,10 @@ def build() -> gr.Blocks:
         run.click(
             process,
             inputs=file,
-            outputs=[ribbon, timeline, status, download, engagement, history_dd],
+            outputs=[
+                ribbon, timeline, status, download, engagement,
+                history_dd, speaker_filter,
+            ],
         )
         load.click(
             load_history,
@@ -494,7 +492,6 @@ def build() -> gr.Blocks:
             outputs=[hist_ribbon, hist_engagement, hist_timeline],
         )
         search.input(fn=None, inputs=search, outputs=None, js=SEARCH_JS)
-        role_filter.change(fn=None, inputs=role_filter, outputs=None, js=ROLE_JS)
         speaker_filter.change(
             fn=None, inputs=speaker_filter, outputs=None, js=SPEAKER_JS
         )
