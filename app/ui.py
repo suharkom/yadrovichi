@@ -294,11 +294,12 @@ def build() -> gr.Blocks:
         gr.Markdown("## Расшифровка урока\nРечь → текст по ролям с таймкодами")
 
         with gr.Row():
-            # Основная область слева: вкладки, лента над текстом реплик.
+            # Основная область слева: лента спикеров НАД вкладками (видна всегда),
+            # под ней — вкладки.
             with gr.Column(scale=3):
+                ribbon = gr.HTML()
                 with gr.Tabs():
                     with gr.Tab("Расшифровка"):
-                        ribbon = gr.HTML()
                         timeline = gr.HTML()
                     with gr.Tab("Вовлечённость"):
                         engagement = gr.HTML()
