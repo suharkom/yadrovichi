@@ -14,8 +14,13 @@ from pathlib import Path
 
 import gradio as gr
 
+from app.services.refine import refine_utterances
+
 # Ниже этого порога уверенности ASR слово считаем сомнительным и подсвечиваем.
 UNCERTAIN_THRESHOLD = 0.5
+
+# Каждые столько выплюнутых реплик прогоняем батч-постобработку.
+REFINE_EVERY = 10
 
 # Цвет по спикеру: преподаватель отдельно, ученики оттенками.
 COLORS = ["#c2410c", "#1d4ed8", "#15803d", "#7e22ce", "#b91c1c", "#0e7490"]
@@ -261,8 +266,9 @@ def process(file):
             )
         elif item["type"] == "utterance":
             collected.append(item)
-            # Живьём: раз в несколько реплик обновляем ленту и метрики.
-            if len(collected) % 8 == 0:
+            # Батч-постобработка и обновление ленты/метрик раз в REFINE_EVERY реплик.
+            if len(collected) % REFINE_EVERY == 0:
+                refine_utterances(collected)
                 a = _analytics_of(collected, meta)
                 ribbon_val = _ribbon_html(a["ribbon"])
                 eng_val = _engagement_html(a)
@@ -278,6 +284,7 @@ def process(file):
                 gr.update(),
             )
         elif item["type"] == "done":
+            refine_utterances(collected)  # финальная батч-постобработка остатка
             rtf = item["pipeline_rtf"]
             verdict = "укладываемся" if rtf <= 0.4 else "ПРЕВЫШЕН бюджет 0.4"
             RESULTS_DIR.mkdir(parents=True, exist_ok=True)
