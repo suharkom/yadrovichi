@@ -360,6 +360,18 @@ def load_history(path: str):
     return _ribbon_html(a["ribbon"]), _engagement_html(a), _render(timeline)
 
 
+def _dict_view():
+    from app.services.user_dict import user_overrides
+
+    return user_overrides()
+
+
+def _dict_add(wrong: str, correct: str):
+    from app.services.user_dict import add_replacement
+
+    return add_replacement(wrong, correct), "", ""
+
+
 def build() -> gr.Blocks:
     theme = gr.themes.Soft(primary_hue="orange", neutral_hue="slate")
     with gr.Blocks(title="yadrovichi", theme=theme, css=CSS, head=HEAD) as demo:
@@ -413,6 +425,18 @@ def build() -> gr.Blocks:
                         hist_ribbon = gr.HTML()
                         hist_engagement = gr.HTML()
                         hist_timeline = gr.HTML()
+                    with gr.Tab("Словарь"):
+                        gr.Markdown(
+                            "Замены частых ошибок ASR. Правки применяются к "
+                            "новым прогонам."
+                        )
+                        with gr.Row():
+                            dict_wrong = gr.Textbox(label="Ошибка ASR")
+                            dict_correct = gr.Textbox(label="Правильно")
+                        dict_add = gr.Button("Добавить замену")
+                        dict_view = gr.JSON(
+                            label="Ваши замены", value=_dict_view()
+                        )
             # Панель управления справа: загрузка, обработка, скачивание.
             with gr.Column(scale=1):
                 file = gr.File(
@@ -437,6 +461,11 @@ def build() -> gr.Blocks:
         )
         search.input(fn=None, inputs=search, outputs=None, js=SEARCH_JS)
         role_filter.change(fn=None, inputs=role_filter, outputs=None, js=ROLE_JS)
+        dict_add.click(
+            _dict_add,
+            inputs=[dict_wrong, dict_correct],
+            outputs=[dict_view, dict_wrong, dict_correct],
+        )
     return demo
 
 
