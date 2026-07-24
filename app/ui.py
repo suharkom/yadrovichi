@@ -21,13 +21,18 @@ RESULTS_DIR = Path("data/results")
 
 # Футер Gradio (стикеры внизу) убираем через <head> — его содержимое не
 # санитайзится, в отличие от gr.HTML, а css-параметр в этой сборке не сработал.
-HEAD = "<style>footer{display:none !important;}</style>"
-CSS = (
-    ".gradio-container {max-width: 100% !important;}"
-    " #theme-toggle {position: fixed; top: 10px; right: 14px; z-index: 1000;"
-    " min-width: 44px !important; width: 44px; padding: 4px 0 !important;"
-    " font-size: 20px; line-height: 1;}"
+HEAD = (
+    "<style>"
+    "footer{display:none !important;}"
+    ".gradio-container{max-width:100% !important;}"
+    # Лампочка-переключатель темы: иконка в правом верхнем углу, без фона/рамки.
+    "#theme-toggle{position:fixed;top:8px;right:14px;z-index:1000;"
+    "width:40px;min-width:40px !important;height:40px;padding:0 !important;"
+    "font-size:22px;line-height:1;background:transparent !important;"
+    "border:none !important;box-shadow:none !important;}"
+    "</style>"
 )
+CSS = ""
 
 # Переключатель темы без перезагрузки: Gradio вешает класс dark на <body>.
 THEME_TOGGLE_JS = "() => { document.body.classList.toggle('dark'); }"
@@ -204,12 +209,13 @@ def process(file):
     collected: list[dict] = []
     meta: dict = {}
 
+    # Старт нового прогона: чистим ленту и график от прошлого файла, как и текст.
     yield (
-        gr.update(),
+        "",
         "<i>Диаризация…</i>",
         "Загружаю и размечаю по голосам",
         None,
-        gr.update(),
+        "",
         gr.update(),
     )
 
@@ -287,7 +293,7 @@ def build() -> gr.Blocks:
         theme_btn = gr.Button("💡", elem_id="theme-toggle")
         theme_btn.click(fn=None, inputs=None, outputs=None, js=THEME_TOGGLE_JS)
 
-        gr.Markdown("## Расшифровка урока\nРечь → текст по ролям с таймкодами")
+        gr.Markdown("## Расшифровка урока")
 
         with gr.Row():
             # Основная область слева: лента спикеров НАД вкладками (видна всегда),
@@ -300,7 +306,7 @@ def build() -> gr.Blocks:
                     with gr.Tab("Вовлечённость"):
                         engagement = gr.HTML()
                     with gr.Tab("История"):
-                        gr.Markdown("Прошлые прогоны (на сервере):")
+                        gr.Markdown("Прошлые прогоны:")
                         history_dd = gr.Dropdown(
                             label="Выберите прогон",
                             choices=_history_choices(),
