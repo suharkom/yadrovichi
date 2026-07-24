@@ -52,13 +52,16 @@ CSS = ""
 _FILTER_BODY = (
     "var q=(document.body.dataset.tq||'').toLowerCase();"
     "var role=document.body.dataset.tr||'all';"
+    "var spk=document.body.dataset.ts||'all';"
     "document.querySelectorAll('.utt').forEach(function(el){"
     "var okText=!q||el.textContent.toLowerCase().indexOf(q)>=0;"
     "var okRole=role==='all'||el.getAttribute('data-role')===role;"
-    "el.style.display=(okText&&okRole)?'':'none';});"
+    "var okSpk=spk==='all'||el.getAttribute('data-speaker')===spk;"
+    "el.style.display=(okText&&okRole&&okSpk)?'':'none';});"
 )
 SEARCH_JS = "(q)=>{document.body.dataset.tq=q||'';" + _FILTER_BODY + "}"
 ROLE_JS = "(r)=>{document.body.dataset.tr=r||'all';" + _FILTER_BODY + "}"
+SPEAKER_JS = "(s)=>{document.body.dataset.ts=s||'all';" + _FILTER_BODY + "}"
 
 # Переключатель темы без перезагрузки: Gradio вешает класс dark на <body>.
 THEME_TOGGLE_JS = "() => { document.body.classList.toggle('dark'); }"
@@ -103,6 +106,7 @@ def _render(timeline: list[dict]) -> str:
         text = _text_with_confidence(item)
         rows.append(
             f"<div class='utt' data-role='{item.get('role', 'unknown')}' "
+            f"data-speaker='{name}' "
             f"style='margin:.6em 0;padding-left:.8em;"
             f"border-left:3px solid {color}'>"
             f"<span style='opacity:.6;font-family:monospace'>{stamp}</span> "
@@ -427,6 +431,20 @@ def build() -> gr.Blocks:
                                 container=False,
                                 scale=2,
                             )
+                            speaker_filter = gr.Dropdown(
+                                choices=[
+                                    ("Спикер: все", "all"),
+                                    ("Преподаватель", "Преподаватель"),
+                                    ("Ученик 1", "Ученик 1"),
+                                    ("Ученик 2", "Ученик 2"),
+                                    ("Ученик 3", "Ученик 3"),
+                                    ("Неизвестный спикер", "Неизвестный спикер"),
+                                ],
+                                value="all",
+                                show_label=False,
+                                container=False,
+                                scale=2,
+                            )
                         timeline = gr.HTML(elem_id="transcript-box")
                     with gr.Tab("Вовлечённость"):
                         engagement = gr.HTML()
@@ -477,6 +495,9 @@ def build() -> gr.Blocks:
         )
         search.input(fn=None, inputs=search, outputs=None, js=SEARCH_JS)
         role_filter.change(fn=None, inputs=role_filter, outputs=None, js=ROLE_JS)
+        speaker_filter.change(
+            fn=None, inputs=speaker_filter, outputs=None, js=SPEAKER_JS
+        )
         dict_add.click(
             _dict_add,
             inputs=[dict_wrong, dict_correct],
