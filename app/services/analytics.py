@@ -270,6 +270,18 @@ def _build_ribbon(
                 "display_name"
             ]
             entry["dominant_speaker_id"] = meta[speaker]["speaker_id"]
+            # Разбивка речи в корзине по ролям — под график «по времени».
+            role_seconds: dict[str, float] = {}
+            for spk, secs in bucket.items():
+                role = meta[spk]["role"]
+                role_seconds[role] = role_seconds.get(role, 0.0) + secs
+            entry["speech_seconds"] = _round(sum(bucket.values()), 1)
+            entry["role_seconds"] = {
+                r: _round(s, 1) for r, s in role_seconds.items()
+            }
+        else:
+            entry["speech_seconds"] = 0.0
+            entry["role_seconds"] = {}
         ribbon.append(entry)
     return ribbon
 

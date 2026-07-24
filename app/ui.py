@@ -1,25 +1,35 @@
 """Веб-интерфейс поверх того же приложения: /docs — API, /ui — интерфейс.
 
-Рендерит результат AudioProcessingPipeline: таймлайн реплик с ролью,
-цветом по спикеру, счётчиком RTF и кнопкой скачать JSON.
-
-Пайплайн батчевый, поэтому результат показывается после обработки целиком.
+Вкладки: расшифровка (живой таймлайн по ролям), вовлечённость (цветная лента +
+график по времени + доли речи) и история прошлых прогонов (с диска).
+Лента и метрики обновляются по ходу распознавания, не дожидаясь конца.
 """
 
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import gradio as gr
 
-# Цвет по роли: преподаватель отдельно, ученики оттенками.
+# Цвет по спикеру: преподаватель отдельно, ученики оттенками.
 COLORS = ["#c2410c", "#1d4ed8", "#15803d", "#7e22ce", "#b91c1c", "#0e7490"]
+ROLE_COLORS = {"teacher": "#c2410c", "student": "#1d4ed8", "unknown": "#9ca3af"}
+
+RESULTS_DIR = Path("data/results")
+
+# Футер Gradio убран; контраст и ширина поправлены. Цвета трека/чипов заданы
+# полупрозрачными, чтобы читаться и на светлой, и на тёмной теме.
+CSS = """
+footer {display: none !important;}
+.gradio-container {max-width: 100% !important;}
+"""
 
 
 def _color(speaker_id) -> str:
     if speaker_id is None:
-        return "#6b7280"
+        return "#9ca3af"
     return COLORS[int(speaker_id) % len(COLORS)]
 
 
@@ -42,15 +52,14 @@ def _render(timeline: list[dict]) -> str:
 
 
 def _ribbon_html(ribbon: list[dict]) -> str:
-    """Цветная лента доминирования: одна полоса = корзина времени, цвет по
-    роли/спикеру, кто в ней говорил дольше всех. Молчание — серым."""
+    """Цветная лента доминирования: полоса = корзина времени, цвет по спикеру,
+    кто говорил дольше всех. Молчание — серым."""
     total = sum(item["end"] - item["start"] for item in ribbon) or 1.0
     cells = []
     for item in ribbon:
         width = (item["end"] - item["start"]) / total * 100
         if item.get("dominant_speaker_id") is None:
-            color = "#e5e7eb"
-            label = "тишина"
+            color, label = "rgba(128,128,128,.25)", "тишина"
         else:
             color = _color(item["dominant_speaker_id"])
             label = item.get("dominant_display_name", "?")
@@ -66,8 +75,44 @@ def _ribbon_html(ribbon: list[dict]) -> str:
     )
 
 
-def _analytics_html(a: dict) -> str:
-    """Сводка вовлечённости: доли речи по спикерам, интерактивность, флаги."""
+def _timechart_svg(ribbon: list[dict], bucket_seconds: float = 60.0) -> str:
+    """Вовлечённость по времени: столбик на корзину, высота — доля речи в
+    минуте, цвет стопкой по ролям (преподаватель/ученики/неизвестный)."""
+    if not ribbon:
+        return ""
+    n = len(ribbon)
+    W, H = 1000.0, 120.0
+    bw = W / n
+    order = ["teacher", "student", "unknown"]
+    bars = []
+    for i, item in enumerate(ribbon):
+        x = i * bw
+        y = H
+        for role in order:
+            secs = item.get("role_seconds", {}).get(role, 0.0)
+            h = secs / bucket_seconds * H
+            if h <= 0:
+                continue
+            y -= h
+            bars.append(
+                f"<rect x='{x:.2f}' y='{y:.2f}' width='{bw:.2f}' "
+                f"height='{h:.2f}' fill='{ROLE_COLORS[role]}'/>"
+            )
+    legend = (
+        "<div style='font-size:.85em;opacity:.8;margin-top:.2em'>"
+        "<span style='color:#c2410c'>■</span> преподаватель &nbsp;"
+        "<span style='color:#1d4ed8'>■</span> ученики &nbsp;"
+        "<span style='color:#9ca3af'>■</span> неизвестный &nbsp;"
+        "· ось X — минуты урока</div>"
+    )
+    return (
+        f"<svg viewBox='0 0 {W:.0f} {H:.0f}' preserveAspectRatio='none' "
+        f"style='width:100%;height:120px'>{''.join(bars)}</svg>" + legend
+    )
+
+
+def _bars_html(a: dict) -> str:
+    """Сводка: доли речи по спикерам полосами, интерактивность, флаги."""
     part = a["participation"]
     inter = a["interactivity"]
     head = (
@@ -89,7 +134,8 @@ def _analytics_html(a: dict) -> str:
             f"{s['display_name']}</b></span>"
             f"<span style='opacity:.7'>{pct:.1f}% · {s['utterances']} реплик "
             f"· {s['questions']} вопр.</span></div>"
-            f"<div style='height:8px;background:#f1f5f9;border-radius:4px'>"
+            f"<div style='height:8px;background:rgba(128,128,128,.25);"
+            f"border-radius:4px'>"
             f"<div style='width:{pct:.1f}%;height:8px;background:{color};"
             f"border-radius:4px'></div></div></div>"
         )
@@ -100,21 +146,52 @@ def _analytics_html(a: dict) -> str:
         "sparse_speech": "много тишины",
     }
     flags = "".join(
-        f"<span style='background:#fef3c7;border-radius:10px;padding:.1em .6em;"
-        f"margin-right:.4em;font-size:.85em'>{flag_labels.get(f, f)}</span>"
+        f"<span style='background:#fde68a;color:#78350f;border-radius:10px;"
+        f"padding:.1em .6em;margin-right:.4em;font-size:.85em'>"
+        f"{flag_labels.get(f, f)}</span>"
         for f in a["flags"]
     )
     flags_row = f"<div style='margin-top:.5em'>{flags}</div>" if flags else ""
     return head + "".join(bars) + flags_row
 
 
-def process(file):
-    """Потоковый прогон: таймлайн заполняется по мере готовности реплик.
+def _analytics_view(a: dict) -> str:
+    """Полный блок вовлечённости: лента + график по времени + доли речи."""
+    return (
+        "<b>Лента спикеров</b>"
+        + _ribbon_html(a["ribbon"])
+        + "<b>Вовлечённость по времени</b>"
+        + _timechart_svg(a["ribbon"])
+        + "<div style='margin-top:.6em'></div>"
+        + _bars_html(a)
+    )
 
-    Генератор — Gradio дорисовывает вывод на каждый yield.
+
+def _analytics_of(collected: list[dict], meta: dict) -> dict:
+    from app.services.analytics import compute_analytics
+
+    return compute_analytics(
+        {
+            "audio_duration_seconds": meta.get("audio_seconds", 0.0),
+            "timeline": collected,
+        }
+    )
+
+
+def _history_choices() -> list[tuple[str, str]]:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    files = sorted(RESULTS_DIR.glob("run_*.json"), reverse=True)
+    return [(f.stem.replace("run_", "").replace("_", " ", 1), str(f)) for f in files]
+
+
+def process(file):
+    """Потоковый прогон. Обновляет таймлайн и (живьём) ленту вовлечённости.
+
+    Выходы: таймлайн, статус, файл для скачивания, блок вовлечённости,
+    список истории.
     """
     if file is None:
-        yield "<i>Загрузите файл</i>", "", None, ""
+        yield "<i>Загрузите файл</i>", "", None, "", gr.update()
         return
 
     from app.main import WORK_DIR, get_pipeline
@@ -124,7 +201,7 @@ def process(file):
     collected: list[dict] = []
     meta: dict = {}
 
-    yield "<i>Диаризация…</i>", "Загружаю и размечаю по голосам", None, ""
+    yield "<i>Диаризация…</i>", "Загружаю и размечаю по голосам", None, "", gr.update()
 
     for item in stream_pipeline(get_pipeline(), src, WORK_DIR):
         if item["type"] == "meta":
@@ -136,16 +213,31 @@ def process(file):
                 f"диаризация RTF {item['diarization_rtf']:.3f}",
                 None,
                 "",
+                gr.update(),
             )
         elif item["type"] == "utterance":
             collected.append(item)
-            yield _render(collected), f"Реплик получено: {len(collected)}…", None, ""
+            # Живая лента: обновляем блок вовлечённости раз в несколько реплик,
+            # чтобы полоса заполнялась по ходу, а не только в конце.
+            if len(collected) % 8 == 0:
+                view = _analytics_view(_analytics_of(collected, meta))
+            else:
+                view = gr.update()
+            yield (
+                _render(collected),
+                f"Реплик получено: {len(collected)}…",
+                None,
+                view,
+                gr.update(),
+            )
         elif item["type"] == "done":
             rtf = item["pipeline_rtf"]
             verdict = "укладываемся" if rtf <= 0.4 else "ПРЕВЫШЕН бюджет 0.4"
-            out = Path("data/results/last.json")
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(
+            # Сохраняем прогон в историю (на диск): не теряется при новом файле.
+            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y-%m-%d %H-%M")
+            run_path = RESULTS_DIR / f"run_{stamp}_{src.stem[:40]}.json"
+            run_path.write_text(
                 json.dumps({"meta": meta, "timeline": collected},
                            ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -154,38 +246,64 @@ def process(file):
                 f"Готово · спикеров {meta.get('speaker_count', '?')} · "
                 f"реплик {item['utterance_count']} · **RTF {rtf:.3f}** — {verdict}"
             )
-            # Аналитика вовлечённости из собранного таймлайна.
-            from app.services.analytics import compute_analytics
-
-            a = compute_analytics(
-                {
-                    "audio_duration_seconds": meta.get("audio_seconds", 0.0),
-                    "timeline": collected,
-                }
+            view = _analytics_view(_analytics_of(collected, meta))
+            yield (
+                _render(collected),
+                status,
+                str(run_path),
+                view,
+                gr.update(choices=_history_choices()),
             )
-            analytics_html = _ribbon_html(a["ribbon"]) + _analytics_html(a)
-            yield _render(collected), status, str(out), analytics_html
+
+
+def load_history(path: str):
+    """Показать сохранённый прогон из истории: таймлайн + вовлечённость."""
+    if not path:
+        return "<i>Выберите прогон</i>", ""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    timeline = data.get("timeline", [])
+    a = _analytics_of(timeline, data.get("meta", {}))
+    return _render(timeline), _analytics_view(a)
 
 
 def build() -> gr.Blocks:
-    with gr.Blocks(title="yadrovichi") as demo:
+    theme = gr.themes.Soft(primary_hue="orange", neutral_hue="slate")
+    with gr.Blocks(title="yadrovichi", theme=theme, css=CSS) as demo:
         gr.Markdown("## Расшифровка урока\nРечь → текст по ролям с таймкодами")
 
         with gr.Row():
-            with gr.Column(scale=1):
-                file = gr.File(label="Запись урока", file_types=["audio", "video"])
-                run = gr.Button("Обработать", variant="primary")
-                status = gr.Markdown()
+            file = gr.File(
+                label="Запись урока", file_types=["audio", "video"], scale=3
+            )
+            run = gr.Button("Обработать", variant="primary", scale=1)
+        status = gr.Markdown()
+
+        with gr.Tabs():
+            with gr.Tab("Расшифровка"):
+                timeline = gr.HTML()
                 download = gr.File(label="Скачать JSON")
-            with gr.Column(scale=2):
-                gr.Markdown("**Лента вовлечённости**")
+            with gr.Tab("Вовлечённость"):
                 analytics = gr.HTML()
-                timeline = gr.HTML(label="Таймлайн")
+            with gr.Tab("История"):
+                gr.Markdown("Прошлые прогоны (сохраняются на сервере):")
+                history_dd = gr.Dropdown(
+                    label="Выберите прогон",
+                    choices=_history_choices(),
+                    interactive=True,
+                )
+                load = gr.Button("Показать")
+                hist_timeline = gr.HTML()
+                hist_analytics = gr.HTML()
 
         run.click(
             process,
             inputs=file,
-            outputs=[timeline, status, download, analytics],
+            outputs=[timeline, status, download, analytics, history_dd],
+        )
+        load.click(
+            load_history,
+            inputs=history_dd,
+            outputs=[hist_timeline, hist_analytics],
         )
     return demo
 
