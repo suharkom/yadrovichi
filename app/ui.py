@@ -46,6 +46,18 @@ CSS = ""
 # Переключатель темы без перезагрузки: Gradio вешает класс dark на <body>.
 THEME_TOGGLE_JS = "() => { document.body.classList.toggle('dark'); }"
 
+# Поиск по расшифровке: прячем реплики, не содержащие запрос (на клиенте).
+SEARCH_JS = (
+    "(q) => {"
+    " const box = document.querySelector('#transcript-box');"
+    " if (!box) return;"
+    " const query = (q || '').trim().toLowerCase();"
+    " box.querySelectorAll('.utt').forEach(el => {"
+    " el.style.display = (!query ||"
+    " el.textContent.toLowerCase().includes(query)) ? '' : 'none'; });"
+    " }"
+)
+
 
 def _color(speaker_id) -> str:
     if speaker_id is None:
@@ -85,7 +97,7 @@ def _render(timeline: list[dict]) -> str:
         color = _color(item.get("speaker_id"))
         text = _text_with_confidence(item)
         rows.append(
-            f"<div style='margin:.6em 0;padding-left:.8em;"
+            f"<div class='utt' style='margin:.6em 0;padding-left:.8em;"
             f"border-left:3px solid {color}'>"
             f"<span style='opacity:.6;font-family:monospace'>{stamp}</span> "
             f"<b style='color:{color}'>{name}</b>"
@@ -360,7 +372,12 @@ def build() -> gr.Blocks:
                             "подчёркнуты слова с низкой уверенностью "
                             "распознавания.</span>"
                         )
-                        timeline = gr.HTML()
+                        search = gr.Textbox(
+                            placeholder="Поиск по расшифровке…",
+                            show_label=False,
+                            container=False,
+                        )
+                        timeline = gr.HTML(elem_id="transcript-box")
                     with gr.Tab("Вовлечённость"):
                         engagement = gr.HTML()
                     with gr.Tab("История"):
@@ -396,6 +413,7 @@ def build() -> gr.Blocks:
             inputs=history_dd,
             outputs=[hist_ribbon, hist_engagement, hist_timeline],
         )
+        search.input(fn=None, inputs=search, outputs=None, js=SEARCH_JS)
     return demo
 
 
