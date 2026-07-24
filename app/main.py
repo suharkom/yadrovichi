@@ -167,10 +167,8 @@ async def analytics(job_id: str, bucket_seconds: float = 60.0):
 
 
 @app.get("/export/{job_id}")
-async def export_subs(job_id: str, format: str = "srt"):
-    """Экспорт расшифровки в субтитры: ?format=srt или ?format=vtt."""
-    from app.services.export_subs import to_srt, to_vtt
-
+async def export_transcript(job_id: str, format: str = "srt"):
+    """Экспорт расшифровки: ?format=srt|vtt|txt|docx."""
     path = RESULT_DIR / f"{job_id}.json"
     if not path.exists():
         raise HTTPException(404, "Результат не найден")
@@ -178,11 +176,27 @@ async def export_subs(job_id: str, format: str = "srt"):
 
     fmt = format.lower()
     if fmt == "srt":
+        from app.services.export_subs import to_srt
+
         body, media = to_srt(timeline), "application/x-subrip"
     elif fmt == "vtt":
+        from app.services.export_subs import to_vtt
+
         body, media = to_vtt(timeline), "text/vtt"
+    elif fmt == "txt":
+        from app.services.export_transcript import to_txt
+
+        body, media = to_txt(timeline), "text/plain; charset=utf-8"
+    elif fmt == "docx":
+        from app.services.export_transcript import docx_bytes
+
+        body = docx_bytes(timeline)
+        media = (
+            "application/vnd.openxmlformats-officedocument."
+            "wordprocessingml.document"
+        )
     else:
-        raise HTTPException(400, "format должен быть srt или vtt")
+        raise HTTPException(400, "format: srt, vtt, txt или docx")
 
     return Response(
         content=body,

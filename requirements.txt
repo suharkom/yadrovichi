@@ -17,6 +17,9 @@ uvicorn>=0.32.0
 python-multipart>=0.0.9
 gradio>=5.0.0
 
+# Экспорт расшифровки в docx
+python-docx>=1.1.0
+
 # Метрики и тесты
 jiwer>=3.0.0
 pytest>=8.0

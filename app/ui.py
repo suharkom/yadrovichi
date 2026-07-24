@@ -296,13 +296,23 @@ def process(file):
                            ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            # Экспорт субтитров рядом с JSON — сразу доступны для скачивания.
+            # Экспорт рядом с JSON — сразу доступны для скачивания.
             from app.services.export_subs import to_srt, to_vtt
+            from app.services.export_transcript import to_txt, write_docx
 
             srt_path = base.with_suffix(".srt")
             srt_path.write_text(to_srt(collected), encoding="utf-8")
             vtt_path = base.with_suffix(".vtt")
             vtt_path.write_text(to_vtt(collected), encoding="utf-8")
+            txt_path = base.with_suffix(".txt")
+            txt_path.write_text(to_txt(collected), encoding="utf-8")
+            export_files = [
+                str(json_path), str(srt_path), str(vtt_path), str(txt_path)
+            ]
+            try:
+                export_files.append(str(write_docx(collected, base.with_suffix(".docx"))))
+            except Exception:
+                pass  # нет python-docx — не роняем прогон, отдаём остальные форматы
 
             status = (
                 f"Готово · спикеров {meta.get('speaker_count', '?')} · "
@@ -313,7 +323,7 @@ def process(file):
                 _ribbon_html(a["ribbon"]),
                 _render(collected),
                 status,
-                [str(json_path), str(srt_path), str(vtt_path)],
+                export_files,
                 _engagement_html(a),
                 gr.update(choices=_history_choices()),
             )
@@ -372,7 +382,8 @@ def build() -> gr.Blocks:
                 run = gr.Button("Обработать", variant="primary")
                 status = gr.Markdown()
                 download = gr.File(
-                    label="Скачать: JSON / SRT / VTT", file_count="multiple"
+                    label="Скачать: JSON / SRT / VTT / TXT / DOCX",
+                    file_count="multiple",
                 )
 
         run.click(
