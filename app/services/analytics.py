@@ -279,9 +279,26 @@ def _build_ribbon(
             entry["role_seconds"] = {
                 r: _round(s, 1) for r, s in role_seconds.items()
             }
+            # Разбивка по спикерам — чтобы график красился как лента (по
+            # спикерам), а не только по ролям. Порядок стабильный по speaker_id.
+            entry["speaker_seconds"] = [
+                {
+                    "speaker_id": meta[spk]["speaker_id"],
+                    "seconds": _round(secs, 1),
+                }
+                for spk, secs in sorted(
+                    bucket.items(),
+                    key=lambda kv: (
+                        meta[kv[0]]["speaker_id"]
+                        if meta[kv[0]]["speaker_id"] is not None
+                        else 999
+                    ),
+                )
+            ]
         else:
             entry["speech_seconds"] = 0.0
             entry["role_seconds"] = {}
+            entry["speaker_seconds"] = []
         ribbon.append(entry)
     return ribbon
 

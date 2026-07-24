@@ -86,33 +86,29 @@ def _ribbon_html(ribbon: list[dict]) -> str:
 
 def _timechart_svg(ribbon: list[dict], bucket_seconds: float = 60.0) -> str:
     """Вовлечённость по времени: столбик на корзину, высота — доля речи в
-    минуте, цвет стопкой по ролям (преподаватель/ученики/неизвестный)."""
+    минуте, цвет стопкой по СПИКЕРАМ — теми же цветами, что и лента, чтобы
+    график и лента совпадали (напр. Ученик 2 зелёный там и там)."""
     if not ribbon:
         return ""
     n = len(ribbon)
     W, H = 1000.0, 120.0
     bw = W / n
-    order = ["teacher", "student", "unknown"]
     bars = []
     for i, item in enumerate(ribbon):
         x = i * bw
         y = H
-        for role in order:
-            secs = item.get("role_seconds", {}).get(role, 0.0)
-            h = secs / bucket_seconds * H
+        for seg in item.get("speaker_seconds", []):
+            h = seg["seconds"] / bucket_seconds * H
             if h <= 0:
                 continue
             y -= h
             bars.append(
                 f"<rect x='{x:.2f}' y='{y:.2f}' width='{bw:.2f}' "
-                f"height='{h:.2f}' fill='{ROLE_COLORS[role]}'/>"
+                f"height='{h:.2f}' fill='{_color(seg['speaker_id'])}'/>"
             )
     legend = (
         "<div style='font-size:.85em;opacity:.8;margin-top:.2em'>"
-        "<span style='color:#c2410c'>■</span> преподаватель &nbsp;"
-        "<span style='color:#1d4ed8'>■</span> ученики &nbsp;"
-        "<span style='color:#9ca3af'>■</span> неизвестный &nbsp;"
-        "· ось X — минуты урока</div>"
+        "цвет по спикеру, как в ленте · ось X — минуты урока</div>"
     )
     return (
         f"<svg viewBox='0 0 {W:.0f} {H:.0f}' preserveAspectRatio='none' "
