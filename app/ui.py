@@ -40,22 +40,30 @@ HEAD = (
     "font-size:22px;line-height:1;background:transparent !important;"
     "border:none !important;box-shadow:none !important;}"
     "</style>"
+    # Общий фильтр расшифровки: учитывает и поиск, и роль (пересечение).
+    "<script>window.__applyTranscriptFilter=function(){"
+    "var box=document.querySelector('#transcript-box');if(!box)return;"
+    "var q=(box.dataset.query||'').toLowerCase();var role=box.dataset.role||'';"
+    "box.querySelectorAll('.utt').forEach(function(el){"
+    "var okText=!q||el.textContent.toLowerCase().indexOf(q)>=0;"
+    "var okRole=!role||role==='all'||el.dataset.role===role;"
+    "el.style.display=(okText&&okRole)?'':'none';});};</script>"
 )
 CSS = ""
 
 # Переключатель темы без перезагрузки: Gradio вешает класс dark на <body>.
 THEME_TOGGLE_JS = "() => { document.body.classList.toggle('dark'); }"
 
-# Поиск по расшифровке: прячем реплики, не содержащие запрос (на клиенте).
+# Поиск и фильтр по роли пишут своё условие в data-атрибуты и зовут общий фильтр.
 SEARCH_JS = (
-    "(q) => {"
-    " const box = document.querySelector('#transcript-box');"
-    " if (!box) return;"
-    " const query = (q || '').trim().toLowerCase();"
-    " box.querySelectorAll('.utt').forEach(el => {"
-    " el.style.display = (!query ||"
-    " el.textContent.toLowerCase().includes(query)) ? '' : 'none'; });"
-    " }"
+    "(q)=>{var b=document.querySelector('#transcript-box');"
+    "if(b){b.dataset.query=q||'';"
+    "window.__applyTranscriptFilter&&window.__applyTranscriptFilter();}}"
+)
+ROLE_JS = (
+    "(r)=>{var b=document.querySelector('#transcript-box');"
+    "if(b){b.dataset.role=r||'all';"
+    "window.__applyTranscriptFilter&&window.__applyTranscriptFilter();}}"
 )
 
 
@@ -97,7 +105,8 @@ def _render(timeline: list[dict]) -> str:
         color = _color(item.get("speaker_id"))
         text = _text_with_confidence(item)
         rows.append(
-            f"<div class='utt' style='margin:.6em 0;padding-left:.8em;"
+            f"<div class='utt' data-role='{item.get('role', 'unknown')}' "
+            f"style='margin:.6em 0;padding-left:.8em;"
             f"border-left:3px solid {color}'>"
             f"<span style='opacity:.6;font-family:monospace'>{stamp}</span> "
             f"<b style='color:{color}'>{name}</b>"
@@ -372,11 +381,24 @@ def build() -> gr.Blocks:
                             "подчёркнуты слова с низкой уверенностью "
                             "распознавания.</span>"
                         )
-                        search = gr.Textbox(
-                            placeholder="Поиск по расшифровке…",
-                            show_label=False,
-                            container=False,
-                        )
+                        with gr.Row():
+                            search = gr.Textbox(
+                                placeholder="Поиск по расшифровке…",
+                                show_label=False,
+                                container=False,
+                                scale=3,
+                            )
+                            role_filter = gr.Radio(
+                                choices=[
+                                    ("Все", "all"),
+                                    ("Преподаватель", "teacher"),
+                                    ("Ученики", "student"),
+                                ],
+                                value="all",
+                                show_label=False,
+                                container=False,
+                                scale=2,
+                            )
                         timeline = gr.HTML(elem_id="transcript-box")
                     with gr.Tab("Вовлечённость"):
                         engagement = gr.HTML()
@@ -414,6 +436,7 @@ def build() -> gr.Blocks:
             outputs=[hist_ribbon, hist_engagement, hist_timeline],
         )
         search.input(fn=None, inputs=search, outputs=None, js=SEARCH_JS)
+        role_filter.change(fn=None, inputs=role_filter, outputs=None, js=ROLE_JS)
     return demo
 
 
