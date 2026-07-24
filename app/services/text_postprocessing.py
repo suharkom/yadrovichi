@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from configs.text_replacements import TEXT_REPLACEMENTS
+from app.services.user_dict import get_replacements
 
 
 def preserve_case(
@@ -24,7 +24,7 @@ def apply_text_replacements(
 ) -> str:
     result = text
 
-    for wrong, correct in TEXT_REPLACEMENTS.items():
+    for wrong, correct in get_replacements().items():
         pattern = re.compile(
             rf"(?<!\w){re.escape(wrong)}(?!\w)",
             flags=re.IGNORECASE,

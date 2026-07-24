@@ -93,8 +93,19 @@ def _breaks(current: dict[str, Any], word: dict[str, Any], speaker: str) -> bool
 
 def _finish(current: dict[str, Any], mapping: dict[str, dict], index: int) -> dict[str, Any]:
     """Собрать реплику: склейка слов, чистка ошибок ASR, роль. Чистая
-    функция — гоняется в пуле параллельно с распознаванием следующей."""
-    text = apply_text_replacements(join_word_tokens(current["words"]))
+    функция — гоняется в пуле параллельно с распознаванием следующей.
+
+    Помимо готового текста отдаём слова с уверенностью ASR (`words`) — по ним
+    интерфейс подсвечивает низкоуверенные слова."""
+    tokens = [w["text"] for w in current["words"]]
+    text = apply_text_replacements(join_word_tokens(tokens))
+    words = [
+        {
+            "text": apply_text_replacements(w["text"]),
+            "probability": w.get("probability"),
+        }
+        for w in current["words"]
+    ]
     llm_text, math_found = annotate(text)
     role = mapping.get(current["speaker"], UNKNOWN_ROLE)
     return {
@@ -104,6 +115,7 @@ def _finish(current: dict[str, Any], mapping: dict[str, dict], index: int) -> di
         "end": round(current["end"], 3),
         "source_speaker": current["speaker"],
         "text": text,
+        "words": words,
         "llm_text": llm_text,
         "has_math": math_found,
         **role,
@@ -131,7 +143,12 @@ def _stream_words(asr_service, path: Path, settings) -> Iterator[dict[str, Any]]
             token = word.word.strip()
             if not token:
                 continue
-            yield {"start": float(word.start), "end": float(word.end), "text": token}
+            yield {
+                "start": float(word.start),
+                "end": float(word.end),
+                "text": token,
+                "probability": getattr(word, "probability", None),
+            }
 
 
 def stream_pipeline(pipeline, audio_path, work_dir="data/work") -> Iterator[dict[str, Any]]:
@@ -157,6 +174,8 @@ def stream_pipeline(pipeline, audio_path, work_dir="data/work") -> Iterator[dict
     try:
         # 1-2. Диаризация целиком → роли из графа (без текста)
         diar = pipeline.diarization_service.diarize(normalized, duration)
+        # Снять pyannote с GPU перед потоковым ASR: ~2 ГБ запаса на общей карте.
+        pipeline.diarization_service.offload()
         turns = diar["turns"]
         teacher = graph_teacher(turns)
         mapping = speaker_mapping(turns, teacher)
@@ -184,11 +203,20 @@ def stream_pipeline(pipeline, audio_path, work_dir="data/work") -> Iterator[dict
                         index += 1
                         while pending and pending[0].done():
                             yield emit(pending.popleft().result())
-                    current = {"start": word["start"], "end": word["end"],
-                               "speaker": speaker, "words": [word["text"]]}
+                    current = {
+                        "start": word["start"], "end": word["end"],
+                        "speaker": speaker,
+                        "words": [
+                            {"text": word["text"],
+                             "probability": word.get("probability")}
+                        ],
+                    }
                 else:
                     current["end"] = word["end"]
-                    current["words"].append(word["text"])
+                    current["words"].append(
+                        {"text": word["text"],
+                         "probability": word.get("probability")}
+                    )
 
             if current is not None:
                 pending.append(pool.submit(_finish, current, mapping, index))

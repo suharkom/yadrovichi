@@ -131,6 +131,10 @@ class AudioProcessingPipeline:
             else:
                 print("Диаризация — из чекпоинта.")
 
+            # Снять pyannote с GPU перед ASR: на общей карте это ~2 ГБ
+            # запаса, чтобы whisper не упёрся в out of memory.
+            self.diarization_service.offload()
+
             asr_result = checkpoint.load_stage(key, "asr")
             if asr_result is None:
                 print("Запускаю транскрибацию...")

@@ -41,10 +41,23 @@ class DiarizationService:
                 "Проверь HF_TOKEN и принятие условий модели."
             )
 
+        self._on_gpu = False
         if settings.asr_device == "cuda":
             self.pipeline.to(torch.device("cuda"))
+            self._on_gpu = True
 
         print("Модель диаризации загружена.")
+
+    def offload(self) -> None:
+        """Снять модель с GPU и освободить VRAM. Стадии последовательны:
+        во время транскрибации диаризатор не нужен, а на общей карте эти
+        ~2 ГБ решают, влезет ли whisper. Перед следующей диаризацией
+        модель сама вернётся на GPU."""
+        if self._on_gpu:
+            self.pipeline.to(torch.device("cpu"))
+            self._on_gpu = False
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def diarize(
         self,
@@ -53,6 +66,11 @@ class DiarizationService:
     ) -> dict[str, Any]:
         if audio_duration <= 0:
             raise ValueError("Длительность аудио должна быть положительной.")
+
+        # Вернуть модель на GPU, если её выгружали после прошлого прогона.
+        if self.settings.asr_device == "cuda" and not self._on_gpu:
+            self.pipeline.to(torch.device("cuda"))
+            self._on_gpu = True
 
         parameters: dict[str, Any] = {
             "min_speakers": self.settings.min_speakers,
