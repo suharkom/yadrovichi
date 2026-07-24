@@ -59,7 +59,11 @@ python -m scripts.smoke data/lesson.mp4
 # Сервис: /docs — API, /ui — интерфейс. Один воркер: видеокарта одна.
 PARALLEL_GPU_STAGES=false uvicorn app.main:app --workers 1 --port 8000
 
-# Юнит-тесты склейки и определения ролей (без GPU)
+# Аналитика вовлечённости по готовому результату (без GPU): кто сколько говорил,
+# баланс участия, интерактивность, лента доминирования по минутам
+python -m scripts.analyze artifacts/ml_result.json --output artifacts/analytics.json
+
+# Юнит-тесты склейки, ролей и аналитики (без GPU)
 python -m pytest tests/ -q
 ```
 
@@ -81,11 +85,13 @@ python -m pytest tests/ -q
 | `app/services/mathnorm.py` | формулы речью → символьный вид для LLM (не подключён) |
 | `app/services/pipeline.py` | батч-оркестратор: диаризация → ASR → склейка → роли |
 | `app/services/streaming.py` | потоковый пайплайн: граф-роли → потоковый ASR |
+| `app/services/analytics.py` | вовлечённость из таймлайна: доли речи, интерактивность, лента |
 | `app/main.py` | FastAPI: `/stream`, `/transcribe`, приём файла до лимита |
 | `app/ui.py` | Gradio на `/ui`: живой таймлайн, цвет по роли, JSON |
 | `configs/` | словари маркеров преподавателя и замен ошибок ASR |
 | `scripts/smoke.py` | прогон пайплайна на файле |
-| `tests/` | юнит-тесты alignment и role_detection |
+| `scripts/analyze.py` | аналитика вовлечённости по готовому JSON результата |
+| `tests/` | юнит-тесты alignment, role_detection, mathnorm и analytics |
 
 ## Договорённости
 
