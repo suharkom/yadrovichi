@@ -277,13 +277,13 @@ def process(file):
 
 
 def load_history(path: str):
-    """Показать сохранённый прогон: лента + текст + вовлечённость."""
+    """Показать сохранённый прогон: лента + график + текст (в этом порядке)."""
     if not path:
-        return "", "<i>Выберите прогон</i>", ""
+        return "", "", "<i>Выберите прогон</i>"
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     timeline = data.get("timeline", [])
     a = _analytics_of(timeline, data.get("meta", {}))
-    return _ribbon_html(a["ribbon"]), _render(timeline), _engagement_html(a)
+    return _ribbon_html(a["ribbon"]), _engagement_html(a), _render(timeline)
 
 
 def build() -> gr.Blocks:
@@ -314,8 +314,8 @@ def build() -> gr.Blocks:
                         )
                         load = gr.Button("Показать")
                         hist_ribbon = gr.HTML()
-                        hist_timeline = gr.HTML()
                         hist_engagement = gr.HTML()
+                        hist_timeline = gr.HTML()
             # Панель управления справа: загрузка, обработка, скачивание.
             with gr.Column(scale=1):
                 file = gr.File(
@@ -333,7 +333,7 @@ def build() -> gr.Blocks:
         load.click(
             load_history,
             inputs=history_dd,
-            outputs=[hist_ribbon, hist_timeline, hist_engagement],
+            outputs=[hist_ribbon, hist_engagement, hist_timeline],
         )
     return demo
 
