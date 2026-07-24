@@ -1,8 +1,8 @@
 """Веб-интерфейс поверх того же приложения: /docs — API, /ui — интерфейс.
 
-Вкладки: расшифровка (живой таймлайн по ролям), вовлечённость (цветная лента +
-график по времени + доли речи) и история прошлых прогонов (с диска).
-Лента и метрики обновляются по ходу распознавания, не дожидаясь конца.
+Вкладки: «Расшифровка» — лента спикеров над текстом реплик по ролям;
+«Вовлечённость» — график по времени и доли речи; «История» — прошлые прогоны
+с диска. Лента и метрики обновляются по ходу распознавания, не дожидаясь конца.
 """
 
 from __future__ import annotations
@@ -19,12 +19,18 @@ ROLE_COLORS = {"teacher": "#c2410c", "student": "#1d4ed8", "unknown": "#9ca3af"}
 
 RESULTS_DIR = Path("data/results")
 
-# Футер Gradio убран; контраст и ширина поправлены. Цвета трека/чипов заданы
-# полупрозрачными, чтобы читаться и на светлой, и на тёмной теме.
-CSS = """
-footer {display: none !important;}
-.gradio-container {max-width: 100% !important;}
-"""
+# Футер Gradio (стикеры внизу) убираем через <head> — его содержимое не
+# санитайзится, в отличие от gr.HTML, а css-параметр в этой сборке не сработал.
+HEAD = "<style>footer{display:none !important;}</style>"
+CSS = (
+    ".gradio-container {max-width: 100% !important;}"
+    " #theme-toggle {position: fixed; top: 10px; right: 14px; z-index: 1000;"
+    " min-width: 44px !important; width: 44px; padding: 4px 0 !important;"
+    " font-size: 20px; line-height: 1;}"
+)
+
+# Переключатель темы без перезагрузки: Gradio вешает класс dark на <body>.
+THEME_TOGGLE_JS = "() => { document.body.classList.toggle('dark'); }"
 
 
 def _color(speaker_id) -> str:
@@ -53,7 +59,9 @@ def _render(timeline: list[dict]) -> str:
 
 def _ribbon_html(ribbon: list[dict]) -> str:
     """Цветная лента доминирования: полоса = корзина времени, цвет по спикеру,
-    кто говорил дольше всех. Молчание — серым."""
+    кто говорил дольше всех. Молчание — серым. Идёт НАД всей расшифровкой."""
+    if not ribbon:
+        return ""
     total = sum(item["end"] - item["start"] for item in ribbon) or 1.0
     cells = []
     for item in ribbon:
@@ -70,8 +78,9 @@ def _ribbon_html(ribbon: list[dict]) -> str:
             f"background:{color}'></div>"
         )
     return (
+        "<div style='font-weight:600;margin:.2em 0'>Лента спикеров</div>"
         "<div style='display:flex;width:100%;border-radius:5px;"
-        "overflow:hidden;margin:.3em 0'>" + "".join(cells) + "</div>"
+        "overflow:hidden;margin:.2em 0 .8em'>" + "".join(cells) + "</div>"
     )
 
 
@@ -112,7 +121,7 @@ def _timechart_svg(ribbon: list[dict], bucket_seconds: float = 60.0) -> str:
 
 
 def _bars_html(a: dict) -> str:
-    """Сводка: доли речи по спикерам полосами, интерактивность, флаги."""
+    """Проценты и саммари: доли речи по спикерам, интерактивность, флаги."""
     part = a["participation"]
     inter = a["interactivity"]
     head = (
@@ -155,14 +164,12 @@ def _bars_html(a: dict) -> str:
     return head + "".join(bars) + flags_row
 
 
-def _analytics_view(a: dict) -> str:
-    """Полный блок вовлечённости: лента + график по времени + доли речи."""
+def _engagement_html(a: dict) -> str:
+    """Вкладка «Вовлечённость»: график по времени + проценты и саммари."""
     return (
-        "<b>Лента спикеров</b>"
-        + _ribbon_html(a["ribbon"])
-        + "<b>Вовлечённость по времени</b>"
+        "<b>Вовлечённость по времени</b>"
         + _timechart_svg(a["ribbon"])
-        + "<div style='margin-top:.6em'></div>"
+        + "<div style='margin-top:.8em'></div>"
         + _bars_html(a)
     )
 
@@ -185,13 +192,13 @@ def _history_choices() -> list[tuple[str, str]]:
 
 
 def process(file):
-    """Потоковый прогон. Обновляет таймлайн и (живьём) ленту вовлечённости.
+    """Потоковый прогон. Обновляет ленту, таймлайн и метрики по ходу.
 
-    Выходы: таймлайн, статус, файл для скачивания, блок вовлечённости,
-    список истории.
+    Выходы: лента (над текстом), таймлайн, статус, файл для скачивания,
+    блок вовлечённости, список истории.
     """
     if file is None:
-        yield "<i>Загрузите файл</i>", "", None, "", gr.update()
+        yield "", "<i>Загрузите файл</i>", "", None, "", gr.update()
         return
 
     from app.main import WORK_DIR, get_pipeline
@@ -201,39 +208,49 @@ def process(file):
     collected: list[dict] = []
     meta: dict = {}
 
-    yield "<i>Диаризация…</i>", "Загружаю и размечаю по голосам", None, "", gr.update()
+    yield (
+        gr.update(),
+        "<i>Диаризация…</i>",
+        "Загружаю и размечаю по голосам",
+        None,
+        gr.update(),
+        gr.update(),
+    )
 
     for item in stream_pipeline(get_pipeline(), src, WORK_DIR):
         if item["type"] == "meta":
             meta = item
             yield (
+                gr.update(),
                 "<i>Распознаю речь…</i>",
                 f"Спикеров {item['speaker_count']} · "
                 f"преподаватель {item.get('teacher', '?')} · "
                 f"диаризация RTF {item['diarization_rtf']:.3f}",
                 None,
-                "",
+                gr.update(),
                 gr.update(),
             )
         elif item["type"] == "utterance":
             collected.append(item)
-            # Живая лента: обновляем блок вовлечённости раз в несколько реплик,
-            # чтобы полоса заполнялась по ходу, а не только в конце.
+            # Живьём: раз в несколько реплик обновляем ленту и метрики.
             if len(collected) % 8 == 0:
-                view = _analytics_view(_analytics_of(collected, meta))
+                a = _analytics_of(collected, meta)
+                ribbon_val = _ribbon_html(a["ribbon"])
+                eng_val = _engagement_html(a)
             else:
-                view = gr.update()
+                ribbon_val = gr.update()
+                eng_val = gr.update()
             yield (
+                ribbon_val,
                 _render(collected),
                 f"Реплик получено: {len(collected)}…",
-                None,
-                view,
+                gr.update(),
+                eng_val,
                 gr.update(),
             )
         elif item["type"] == "done":
             rtf = item["pipeline_rtf"]
             verdict = "укладываемся" if rtf <= 0.4 else "ПРЕВЫШЕН бюджет 0.4"
-            # Сохраняем прогон в историю (на диск): не теряется при новом файле.
             RESULTS_DIR.mkdir(parents=True, exist_ok=True)
             stamp = time.strftime("%Y-%m-%d %H-%M")
             run_path = RESULTS_DIR / f"run_{stamp}_{src.stem[:40]}.json"
@@ -246,45 +263,45 @@ def process(file):
                 f"Готово · спикеров {meta.get('speaker_count', '?')} · "
                 f"реплик {item['utterance_count']} · **RTF {rtf:.3f}** — {verdict}"
             )
-            view = _analytics_view(_analytics_of(collected, meta))
+            a = _analytics_of(collected, meta)
             yield (
+                _ribbon_html(a["ribbon"]),
                 _render(collected),
                 status,
                 str(run_path),
-                view,
+                _engagement_html(a),
                 gr.update(choices=_history_choices()),
             )
 
 
 def load_history(path: str):
-    """Показать сохранённый прогон из истории: таймлайн + вовлечённость."""
+    """Показать сохранённый прогон: лента + текст + вовлечённость."""
     if not path:
-        return "<i>Выберите прогон</i>", ""
+        return "", "<i>Выберите прогон</i>", ""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     timeline = data.get("timeline", [])
     a = _analytics_of(timeline, data.get("meta", {}))
-    return _render(timeline), _analytics_view(a)
+    return _ribbon_html(a["ribbon"]), _render(timeline), _engagement_html(a)
 
 
 def build() -> gr.Blocks:
     theme = gr.themes.Soft(primary_hue="orange", neutral_hue="slate")
-    with gr.Blocks(title="yadrovichi", theme=theme, css=CSS) as demo:
-        # Надёжно убрать футер Gradio (стикеры внизу): стиль прямо в DOM,
-        # css-параметр в этой сборке его не поймал.
-        gr.HTML(
-            "<style>footer{display:none !important;}</style>",
-            visible=True,
-        )
+    with gr.Blocks(title="yadrovichi", theme=theme, css=CSS, head=HEAD) as demo:
+        # Лампочка в правом верхнем углу — переключение светлой/тёмной темы.
+        theme_btn = gr.Button("💡", elem_id="theme-toggle")
+        theme_btn.click(fn=None, inputs=None, outputs=None, js=THEME_TOGGLE_JS)
+
         gr.Markdown("## Расшифровка урока\nРечь → текст по ролям с таймкодами")
 
         with gr.Row():
-            # Основная область слева: вкладки НАД текстом реплик.
+            # Основная область слева: вкладки, лента над текстом реплик.
             with gr.Column(scale=3):
                 with gr.Tabs():
                     with gr.Tab("Расшифровка"):
+                        ribbon = gr.HTML()
                         timeline = gr.HTML()
                     with gr.Tab("Вовлечённость"):
-                        analytics = gr.HTML()
+                        engagement = gr.HTML()
                     with gr.Tab("История"):
                         gr.Markdown("Прошлые прогоны (на сервере):")
                         history_dd = gr.Dropdown(
@@ -293,8 +310,9 @@ def build() -> gr.Blocks:
                             interactive=True,
                         )
                         load = gr.Button("Показать")
+                        hist_ribbon = gr.HTML()
                         hist_timeline = gr.HTML()
-                        hist_analytics = gr.HTML()
+                        hist_engagement = gr.HTML()
             # Панель управления справа: загрузка, обработка, скачивание.
             with gr.Column(scale=1):
                 file = gr.File(
@@ -307,12 +325,12 @@ def build() -> gr.Blocks:
         run.click(
             process,
             inputs=file,
-            outputs=[timeline, status, download, analytics, history_dd],
+            outputs=[ribbon, timeline, status, download, engagement, history_dd],
         )
         load.click(
             load_history,
             inputs=history_dd,
-            outputs=[hist_timeline, hist_analytics],
+            outputs=[hist_ribbon, hist_timeline, hist_engagement],
         )
     return demo
 
