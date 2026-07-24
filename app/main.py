@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.services.streaming import stream_pipeline
 
@@ -164,6 +164,33 @@ async def analytics(job_id: str, bucket_seconds: float = 60.0):
         raise HTTPException(404, "Результат не найден")
     result = json.loads(path.read_text(encoding="utf-8"))
     return compute_analytics(result, ribbon_bucket_seconds=bucket_seconds)
+
+
+@app.get("/export/{job_id}")
+async def export_subs(job_id: str, format: str = "srt"):
+    """Экспорт расшифровки в субтитры: ?format=srt или ?format=vtt."""
+    from app.services.export_subs import to_srt, to_vtt
+
+    path = RESULT_DIR / f"{job_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Результат не найден")
+    timeline = json.loads(path.read_text(encoding="utf-8")).get("timeline", [])
+
+    fmt = format.lower()
+    if fmt == "srt":
+        body, media = to_srt(timeline), "application/x-subrip"
+    elif fmt == "vtt":
+        body, media = to_vtt(timeline), "text/vtt"
+    else:
+        raise HTTPException(400, "format должен быть srt или vtt")
+
+    return Response(
+        content=body,
+        media_type=media,
+        headers={
+            "Content-Disposition": f'attachment; filename="{job_id}.{fmt}"'
+        },
+    )
 
 
 @app.get("/health")

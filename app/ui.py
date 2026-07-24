@@ -255,12 +255,21 @@ def process(file):
             verdict = "укладываемся" if rtf <= 0.4 else "ПРЕВЫШЕН бюджет 0.4"
             RESULTS_DIR.mkdir(parents=True, exist_ok=True)
             stamp = time.strftime("%Y-%m-%d %H-%M")
-            run_path = RESULTS_DIR / f"run_{stamp}_{src.stem[:40]}.json"
-            run_path.write_text(
+            base = RESULTS_DIR / f"run_{stamp}_{src.stem[:40]}"
+            json_path = base.with_suffix(".json")
+            json_path.write_text(
                 json.dumps({"meta": meta, "timeline": collected},
                            ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+            # Экспорт субтитров рядом с JSON — сразу доступны для скачивания.
+            from app.services.export_subs import to_srt, to_vtt
+
+            srt_path = base.with_suffix(".srt")
+            srt_path.write_text(to_srt(collected), encoding="utf-8")
+            vtt_path = base.with_suffix(".vtt")
+            vtt_path.write_text(to_vtt(collected), encoding="utf-8")
+
             status = (
                 f"Готово · спикеров {meta.get('speaker_count', '?')} · "
                 f"реплик {item['utterance_count']} · **RTF {rtf:.3f}** — {verdict}"
@@ -270,7 +279,7 @@ def process(file):
                 _ribbon_html(a["ribbon"]),
                 _render(collected),
                 status,
-                str(run_path),
+                [str(json_path), str(srt_path), str(vtt_path)],
                 _engagement_html(a),
                 gr.update(choices=_history_choices()),
             )
@@ -323,7 +332,9 @@ def build() -> gr.Blocks:
                 )
                 run = gr.Button("Обработать", variant="primary")
                 status = gr.Markdown()
-                download = gr.File(label="Скачать JSON")
+                download = gr.File(
+                    label="Скачать: JSON / SRT / VTT", file_count="multiple"
+                )
 
         run.click(
             process,
