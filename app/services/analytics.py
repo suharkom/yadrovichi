@@ -56,6 +56,7 @@ def compute_analytics(
             speaker,
             {
                 "speaker": speaker,
+                "speaker_id": utt.get("speaker_id"),
                 "role": utt.get("role", "unknown"),
                 "display_name": utt.get("display_name", speaker),
                 "talk_seconds": 0.0,
@@ -81,6 +82,7 @@ def compute_analytics(
         speaker_list.append(
             {
                 "speaker": agg["speaker"],
+                "speaker_id": agg["speaker_id"],
                 "role": agg["role"],
                 "display_name": agg["display_name"],
                 "talk_seconds": _round(talk, 1),
@@ -232,6 +234,7 @@ def _build_ribbon(
             {
                 "role": utt.get("role", "unknown"),
                 "display_name": utt.get("display_name", speaker),
+                "speaker_id": utt.get("speaker_id"),
             },
         )
         start = float(utt["start"])
@@ -266,6 +269,7 @@ def _build_ribbon(
             entry["dominant_display_name"] = meta[speaker][
                 "display_name"
             ]
+            entry["dominant_speaker_id"] = meta[speaker]["speaker_id"]
         ribbon.append(entry)
     return ribbon
 

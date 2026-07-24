@@ -153,6 +153,19 @@ async def result(job_id: str):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@app.get("/analytics/{job_id}")
+async def analytics(job_id: str, bucket_seconds: float = 60.0):
+    """Аналитика вовлечённости по сохранённому результату: доли речи по
+    ролям и спикерам, интерактивность, лента доминирования по корзинам."""
+    from app.services.analytics import compute_analytics
+
+    path = RESULT_DIR / f"{job_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Результат не найден")
+    result = json.loads(path.read_text(encoding="utf-8"))
+    return compute_analytics(result, ribbon_bucket_seconds=bucket_seconds)
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "queued": len(jobs)}
