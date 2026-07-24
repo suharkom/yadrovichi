@@ -269,31 +269,40 @@ def load_history(path: str):
 def build() -> gr.Blocks:
     theme = gr.themes.Soft(primary_hue="orange", neutral_hue="slate")
     with gr.Blocks(title="yadrovichi", theme=theme, css=CSS) as demo:
+        # Надёжно убрать футер Gradio (стикеры внизу): стиль прямо в DOM,
+        # css-параметр в этой сборке его не поймал.
+        gr.HTML(
+            "<style>footer{display:none !important;}</style>",
+            visible=True,
+        )
         gr.Markdown("## Расшифровка урока\nРечь → текст по ролям с таймкодами")
 
         with gr.Row():
-            file = gr.File(
-                label="Запись урока", file_types=["audio", "video"], scale=3
-            )
-            run = gr.Button("Обработать", variant="primary", scale=1)
-        status = gr.Markdown()
-
-        with gr.Tabs():
-            with gr.Tab("Расшифровка"):
-                timeline = gr.HTML()
-                download = gr.File(label="Скачать JSON")
-            with gr.Tab("Вовлечённость"):
-                analytics = gr.HTML()
-            with gr.Tab("История"):
-                gr.Markdown("Прошлые прогоны (сохраняются на сервере):")
-                history_dd = gr.Dropdown(
-                    label="Выберите прогон",
-                    choices=_history_choices(),
-                    interactive=True,
+            # Основная область слева: вкладки НАД текстом реплик.
+            with gr.Column(scale=3):
+                with gr.Tabs():
+                    with gr.Tab("Расшифровка"):
+                        timeline = gr.HTML()
+                    with gr.Tab("Вовлечённость"):
+                        analytics = gr.HTML()
+                    with gr.Tab("История"):
+                        gr.Markdown("Прошлые прогоны (на сервере):")
+                        history_dd = gr.Dropdown(
+                            label="Выберите прогон",
+                            choices=_history_choices(),
+                            interactive=True,
+                        )
+                        load = gr.Button("Показать")
+                        hist_timeline = gr.HTML()
+                        hist_analytics = gr.HTML()
+            # Панель управления справа: загрузка, обработка, скачивание.
+            with gr.Column(scale=1):
+                file = gr.File(
+                    label="Запись урока", file_types=["audio", "video"]
                 )
-                load = gr.Button("Показать")
-                hist_timeline = gr.HTML()
-                hist_analytics = gr.HTML()
+                run = gr.Button("Обработать", variant="primary")
+                status = gr.Markdown()
+                download = gr.File(label="Скачать JSON")
 
         run.click(
             process,
